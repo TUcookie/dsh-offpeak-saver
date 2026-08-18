@@ -1,0 +1,9 @@
+- insert:
+    - id: offpeak-saver
+      name: dsh-offpeak-saver
+      config:
+        api_key: ''
+        default_model: deepseek-v4-flash
+        peak_hours:
+          - '09:00-12:00'
+          - '14:00-18:00'

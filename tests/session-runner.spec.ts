@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractSessionOutput, SessionOutputError } from '../src/session-runner.js'
+import { extractSessionOutput, extractStreamDeltas, SessionOutputError } from '../src/session-runner.js'
 
 function assistantEvent(seq: number, text: string, usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number }) {
   return {
@@ -41,5 +41,28 @@ describe('extractSessionOutput', () => {
     ])
     expect(result.usage.inputTokens).toBe(0)
     expect(result.usage.outputTokens).toBe(20)
+  })
+})
+
+describe('extractStreamDeltas', () => {
+  it('提取 text-delta 与 reasoning-delta 增量', () => {
+    const deltas = extractStreamDeltas([
+      { seq: 1, type: 'assistant/chunk', data: { chunk: { type: 'reasoning-delta', index: 0, text: '思考' } } },
+      { seq: 2, type: 'assistant/chunk', data: { chunk: { type: 'text-delta', index: 1, text: '回答' } } },
+      { seq: 3, type: 'assistant/chunk', data: { chunk: { type: 'block-start', index: 0 } } },
+      { seq: 4, type: 'turn/end', data: {} },
+    ])
+    expect(deltas).toEqual([
+      { kind: 'reasoning', text: '思考' },
+      { kind: 'text', text: '回答' },
+    ])
+  })
+
+  it('忽略空文本与其他事件', () => {
+    expect(extractStreamDeltas([])).toEqual([])
+    expect(extractStreamDeltas([
+      { seq: 1, type: 'assistant/chunk', data: { chunk: { type: 'text-delta', index: 0, text: '' } } },
+      { seq: 2, type: 'user/message', data: {} },
+    ])).toEqual([])
   })
 })

@@ -32,9 +32,20 @@ export interface SessionRunResult {
   sessionId: string
 }
 
+/** 流式增量：reasoning = 思考过程，text = 最终回复。 */
+export interface SessionStreamDelta {
+  kind: 'text' | 'reasoning'
+  text: string
+}
+
 /** 执行器需要的会话运行能力（core 注入；测试可 mock）。 */
 export interface SessionRunner {
-  runTask(payload: TaskPayload, signal: AbortSignal, model?: string): Promise<SessionRunResult>
+  runTask(
+    payload: TaskPayload,
+    signal: AbortSignal,
+    model?: string,
+    onStream?: (delta: SessionStreamDelta) => void,
+  ): Promise<SessionRunResult>
   cancelAll(): void
 }
 
@@ -78,6 +89,11 @@ interface SessionLike {
         content?: Array<{ type?: string; text?: string }>
       }
       usage?: SessionTokenUsage
+      chunk?: {
+        type?: string
+        index?: number
+        text?: string
+      }
     }
   }>
 }
@@ -108,7 +124,12 @@ export function createDshSessionRunner(ctx: unknown): SessionRunner {
   const activeAgents = new Set<AgentLike>()
 
   return {
-    async runTask(payload: TaskPayload, signal: AbortSignal, model?: string): Promise<SessionRunResult> {
+    async runTask(
+      payload: TaskPayload,
+      signal: AbortSignal,
+      model?: string,
+      onStream?: (delta: SessionStreamDelta) => void,
+    ): Promise<SessionRunResult> {
       const startedEvents = Date.now()
       const options = {
         provider: 'deepseek-official',
@@ -144,12 +165,39 @@ export function createDshSessionRunner(ctx: unknown): SessionRunner {
       }
       signal.addEventListener('abort', abortHandler, { once: true })
 
+      let pollTimer: ReturnType<typeof setInterval> | null = null
+      let seenSeq = cursor
+      const pollAndEmit = (): void => {
+        const events = agent.session.events
+        if (events.length <= seenSeq) return
+        const fresh = events.slice(seenSeq)
+        seenSeq = events.length
+        if (onStream === undefined) return
+        for (const delta of extractStreamDeltas(fresh)) {
+          onStream(delta)
+        }
+      }
+      const startPolling = (): void => {
+        if (onStream === undefined) return
+        pollTimer = setInterval(pollAndEmit, 120)
+      }
+      const stopPolling = (): void => {
+        if (pollTimer !== null) {
+          clearInterval(pollTimer)
+          pollTimer = null
+        }
+      }
+
       try {
         agent.followup({
           content: [{ type: 'text', text: payload.prompt }],
           source: { kind: 'plugin', plugin: 'dsh-offpeak-saver' },
         })
+        startPolling()
         await agent.whenIdle()
+        stopPolling()
+        // 收尾时补扫最后一批事件（interval 可能还没触发）
+        pollAndEmit()
         if (signal.aborted) throw new CancelledSessionError()
 
         const { content, usage } = extractSessionOutput(agent.session.events.slice(cursor))
@@ -162,6 +210,7 @@ export function createDshSessionRunner(ctx: unknown): SessionRunner {
           sessionId: agent.id,
         }
       } finally {
+        stopPolling()
         signal.removeEventListener('abort', abortHandler)
         activeAgents.delete(agent)
       }
@@ -177,6 +226,21 @@ export function createDshSessionRunner(ctx: unknown): SessionRunner {
       }
     },
   }
+}
+
+/** 从新增会话事件里提取流式增量（assistant/chunk 的 text/reasoning delta）。 */
+export function extractStreamDeltas(events: SessionLike['events']): SessionStreamDelta[] {
+  const deltas: SessionStreamDelta[] = []
+  for (const event of events) {
+    if (event.type !== 'assistant/chunk' || event.data === undefined) continue
+    const chunk = event.data.chunk
+    if (chunk?.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text !== '') {
+      deltas.push({ kind: 'text', text: chunk.text })
+    } else if (chunk?.type === 'reasoning-delta' && typeof chunk.text === 'string' && chunk.text !== '') {
+      deltas.push({ kind: 'reasoning', text: chunk.text })
+    }
+  }
+  return deltas
 }
 
 /** 从新增会话事件提取文本与 usage 汇总。 */

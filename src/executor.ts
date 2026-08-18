@@ -20,6 +20,7 @@ export type CoreEvent =
   | { type: 'task-failed'; task: TaskRow; error: string }
   | { type: 'task-paused'; task: TaskRow; reason: string }
   | { type: 'task-cancelled'; task: TaskRow }
+  | { type: 'task-stream'; taskId: string; kind: 'text' | 'reasoning'; text: string }
   | { type: 'window-changed'; phase: 'peak' | 'offpeak'; at: string }
   | { type: 'drain-started'; count: number }
   | { type: 'stale-tasks'; count: number }
@@ -284,7 +285,9 @@ export class TaskExecutor {
     if (runner === undefined) {
       throw new SessionOutputError('会话内执行器不可用')
     }
-    const result = await runner.runTask(payload, signal, model)
+    const result = await runner.runTask(payload, signal, model, (delta) => {
+      this.emit({ type: 'task-stream', taskId: task.id, kind: delta.kind, text: delta.text })
+    })
     return {
       content: result.content,
       usage: {

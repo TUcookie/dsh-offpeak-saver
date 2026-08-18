@@ -249,4 +249,42 @@ describe('OffpeakPanel 渲染', () => {
       expect(screen.getByText(/已提交/)).toBeTruthy()
     })
   })
+
+  it('SSE task-stream 增量实时显示在正在执行区（逐字输出钩子）', async () => {
+    stubEventSource()
+    const running = {
+      ...fakeOverview().pending[0]!,
+      id: 'task-stream-1',
+      title: '流式直播任务',
+      status: 'running',
+      executed_at: new Date().toISOString(),
+      completed_at: null,
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      const overview = fakeOverview()
+      overview.running = [running]
+      overview.pending = []
+      return new Response(JSON.stringify({ ok: true, value: overview }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    render(<OffpeakPanel t={(key) => zh[key]} />)
+    await waitFor(() => {
+      expect(screen.getByText('流式直播任务')).toBeTruthy()
+    })
+    expect(screen.getByText('等待模型输出…')).toBeTruthy()
+
+    const es = FakeEventSource.instances.at(-1)!
+    es.emit({ type: 'task-stream', taskId: 'task-stream-1', kind: 'reasoning', text: '先想' })
+    es.emit({ type: 'task-stream', taskId: 'task-stream-1', kind: 'reasoning', text: '清楚' })
+    es.emit({ type: 'task-stream', taskId: 'task-stream-1', kind: 'text', text: '最终' })
+    es.emit({ type: 'task-stream', taskId: 'task-stream-1', kind: 'text', text: '答案' })
+
+    await waitFor(() => {
+      expect(screen.getByText(/先想清楚/)).toBeTruthy()
+      expect(screen.getByText(/最终答案/)).toBeTruthy()
+    })
+  })
 })

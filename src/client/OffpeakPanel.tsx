@@ -98,10 +98,16 @@ function formatElapsed(fromIso: string, now: number): string {
   return `${Math.floor(secs / 60)}m${secs % 60}s`
 }
 
-function RunningSection({ tasks, t, now, onCancel }: {
+interface TaskStreamText {
+  text: string
+  reasoning: string
+}
+
+function RunningSection({ tasks, t, now, streams, onCancel }: {
   tasks: PanelTask[]
   t: (key: keyof typeof zh) => string
   now: number
+  streams: Record<string, TaskStreamText>
   onCancel: (id: string) => void
 }): React.ReactNode {
   if (tasks.length === 0) return null
@@ -112,34 +118,46 @@ function RunningSection({ tasks, t, now, onCancel }: {
         <span className={css.liveDot} />
         <span className={css.liveLabel}>{t('live')}</span>
       </div>
-      <table className={css.table}>
-        <thead>
-          <tr>
-            <th>{t('taskTitle')}</th>
-            <th>{t('startedAt')}</th>
-            <th>{t('elapsed')}</th>
-            <th>{t('taskAction')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {tasks.map((task) => (
-            <tr key={task.id}>
-              <td className={css.truncate} title={task.prompt}>{task.title}</td>
-              <td className={css.mono}>
-                {task.executed_at !== null ? formatClock(task.executed_at) : '—'}
-              </td>
-              <td className={css.mono}>
-                {task.executed_at !== null ? formatElapsed(task.executed_at, now) : '—'}
-              </td>
-              <td>
-                <button className={css.button} onClick={() => { onCancel(task.id) }}>
-                  {t('taskCancel')}
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {tasks.map((task) => {
+        const stream = streams[task.id]
+        const hasStream = stream !== undefined && (stream.text !== '' || stream.reasoning !== '')
+        return (
+          <div key={task.id} className={css.streamRow}>
+            <table className={css.table}>
+              <tbody>
+                <tr>
+                  <td className={css.truncate} title={task.prompt}>{task.title}</td>
+                  <td className={css.mono}>
+                    {task.executed_at !== null ? `${t('startedAt')} ${formatClock(task.executed_at)}` : '—'}
+                  </td>
+                  <td className={css.mono}>
+                    {task.executed_at !== null ? `${t('elapsed')} ${formatElapsed(task.executed_at, now)}` : '—'}
+                  </td>
+                  <td>
+                    <button className={css.button} onClick={() => { onCancel(task.id) }}>
+                      {t('taskCancel')}
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div className={css.streamBox}>
+              {!hasStream
+                ? <span className={css.streamEmpty}>{t('streamWaiting')}</span>
+                : (
+                  <>
+                    {stream !== undefined && stream.reasoning !== '' && (
+                      <div className={css.streamReasoning}>{stream.reasoning}</div>
+                    )}
+                    {stream !== undefined && stream.text !== '' && (
+                      <div className={css.streamText}>{stream.text}</div>
+                    )}
+                  </>
+                )}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -284,6 +302,7 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
   const [period, setPeriod] = useState<'day' | 'week' | 'month'>('day')
   const [cancelling, setCancelling] = useState<Set<string>>(new Set())
   const [nowTick, setNowTick] = useState(() => Date.now())
+  const [streamTexts, setStreamTexts] = useState<Record<string, TaskStreamText>>({})
 
   const load = useMemo(() => async (): Promise<void> => {
     setError(null)
@@ -330,9 +349,43 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
   useEffect(() => {
     if (typeof EventSource === 'undefined') return
     const es = new EventSource('/offpeak-saver/events')
-    es.addEventListener('message', () => { void load() })
+    es.addEventListener('message', (raw) => {
+      try {
+        const event = JSON.parse((raw as MessageEvent<string>).data) as {
+          type?: string
+          taskId?: string
+          kind?: 'text' | 'reasoning'
+          text?: string
+        }
+        if (event.type === 'task-stream' && event.taskId !== undefined && typeof event.text === 'string') {
+          setStreamTexts((prev) => {
+            const current = prev[event.taskId!] ?? { text: '', reasoning: '' }
+            const key = event.kind === 'reasoning' ? 'reasoning' : 'text'
+            const next = `${current[key]}${event.text}`.slice(-4000)
+            return { ...prev, [event.taskId!]: { ...current, [key]: next } }
+          })
+          return
+        }
+        void load()
+      } catch {
+        void load()
+      }
+    })
     return () => { es.close() }
   }, [load])
+
+  // 任务离开 running 列表后清理流式缓存，避免残留
+  useEffect(() => {
+    if (state === null) return
+    const runningIds = new Set(state.running.map((task) => task.id))
+    setStreamTexts((prev) => {
+      const stale = Object.keys(prev).filter((id) => !runningIds.has(id))
+      if (stale.length === 0) return prev
+      const next = { ...prev }
+      for (const id of stale) delete next[id]
+      return next
+    })
+  }, [state])
 
   if (loading && state === null) {
     return <div className={css.panel}><div className={css.empty}>{t('loading')}</div></div>
@@ -410,7 +463,13 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
         </div>
       </div>
 
-      <RunningSection tasks={state.running} t={t} now={nowTick} onCancel={(id) => { void cancel(id) }} />
+      <RunningSection
+        tasks={state.running}
+        t={t}
+        now={nowTick}
+        streams={streamTexts}
+        onCancel={(id) => { void cancel(id) }}
+      />
 
       <div className={css.section}>
         <div className={css.sectionHead}>

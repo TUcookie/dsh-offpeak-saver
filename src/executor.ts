@@ -9,6 +9,7 @@ import { computeCosts, type Usage } from './billing.js'
 import { ApiError, CancelledError, DeepSeekClient } from './client.js'
 import { resolveResultsDir, type Config, type PricingEntry } from './config.js'
 import { type TaskPayload, type TaskRow, TaskStore } from './db.js'
+import { CancelledSessionError, SessionOutputError, type SessionRunner } from './session-runner.js'
 import { isPeak, parsePeakHours, shouldStopBeforePeak, type PeakWindow } from './time.js'
 
 export type CoreEvent =
@@ -27,6 +28,8 @@ export interface ExecutorHooks {
   onEvent?: (event: CoreEvent) => void
   /** 插件/核心正在关闭时禁止一切重试。 */
   isClosed?: () => boolean
+  /** 会话内执行器（B 方案）；缺失时回退 direct 模式。 */
+  sessionRunner?: SessionRunner
 }
 
 /** 动态信号量：limit 变化即时生效（max_concurrency 热更新）。 */
@@ -152,6 +155,7 @@ export class TaskExecutor {
     const model = payload.model ?? this.config.default_model
     const pricing = this.pricingFor(model)
     const isRealtime = task.priority === 0
+    const useSession = this.config.execution_mode === 'session' && this.hooks.sessionRunner !== undefined
 
     for (let attempt = 0; ; attempt++) {
       if (this.closed) {
@@ -164,22 +168,17 @@ export class TaskExecutor {
       }
 
       try {
-        const result = await this.client.chat(
-          {
-            model,
-            messages: [{ role: 'user', content: payload.prompt }],
-            temperature: payload.params?.temperature,
-            max_tokens: payload.params?.max_tokens,
-          },
-          signal,
-        )
+        const result = useSession
+          ? await this.runInSession(task, payload, model, signal)
+          : await this.runDirect(task, payload, model, signal)
+        const startedAt = result.startedAt
         const usage: Usage = {
           input_tokens: result.usage.input_tokens,
           output_tokens: result.usage.output_tokens,
           cache_hit_tokens: result.usage.cache_hit_tokens,
         }
         // 计费时段以“请求发起时刻”为准，而非完成时刻（DeepSeek 服务端口径）
-        const effectiveDiscount = isPeak(result.startedAt, this.windows, this.config.timezone_offset_hours)
+        const effectiveDiscount = isPeak(startedAt, this.windows, this.config.timezone_offset_hours)
           ? 1
           : this.config.discount_rate
         const costs = computeCosts(usage, pricing, effectiveDiscount)
@@ -188,7 +187,7 @@ export class TaskExecutor {
           status: 'completed',
           model,
           completed_at: new Date().toISOString(),
-          billed_at: result.startedAt.toISOString(),
+          billed_at: startedAt.toISOString(),
           discount_used: effectiveDiscount,
           input_tokens: usage.input_tokens,
           output_tokens: usage.output_tokens,
@@ -202,8 +201,12 @@ export class TaskExecutor {
         this.emit({ type: 'task-completed', task: this.requireTask(task.id) })
         return
       } catch (error) {
-        if (error instanceof CancelledError) {
+        if (error instanceof CancelledError || error instanceof CancelledSessionError) {
           this.fail(task.id, '请求被取消（用户取消或插件关闭）', 'cancelled')
+          return
+        }
+        if (error instanceof SessionOutputError) {
+          this.fail(task.id, error.message, 'api')
           return
         }
         if (error instanceof ApiError) {
@@ -234,6 +237,62 @@ export class TaskExecutor {
         this.fail(task.id, `本地持久化错误（API 已返回，未重试）：${message}`, 'local')
         return
       }
+    }
+  }
+
+  private async runDirect(
+    task: TaskRow,
+    payload: TaskPayload,
+    model: string,
+    signal: AbortSignal,
+  ): Promise<{
+    content: string
+    usage: { input_tokens: number; output_tokens: number; cache_hit_tokens: number }
+    startedAt: Date
+  }> {
+    const result = await this.client.chat(
+      {
+        model,
+        messages: [{ role: 'user', content: payload.prompt }],
+        temperature: payload.params?.temperature,
+        max_tokens: payload.params?.max_tokens,
+      },
+      signal,
+    )
+    return {
+      content: result.content,
+      usage: {
+        input_tokens: result.usage.input_tokens,
+        output_tokens: result.usage.output_tokens,
+        cache_hit_tokens: result.usage.cache_hit_tokens,
+      },
+      startedAt: result.startedAt,
+    }
+  }
+
+  private async runInSession(
+    task: TaskRow,
+    payload: TaskPayload,
+    model: string,
+    signal: AbortSignal,
+  ): Promise<{
+    content: string
+    usage: { input_tokens: number; output_tokens: number; cache_hit_tokens: number }
+    startedAt: Date
+  }> {
+    const runner = this.hooks.sessionRunner
+    if (runner === undefined) {
+      throw new SessionOutputError('会话内执行器不可用')
+    }
+    const result = await runner.runTask(payload, signal, model)
+    return {
+      content: result.content,
+      usage: {
+        input_tokens: result.usage.inputTokens,
+        output_tokens: result.usage.outputTokens,
+        cache_hit_tokens: result.usage.cacheReadTokens,
+      },
+      startedAt: new Date(),
     }
   }
 

@@ -23,6 +23,7 @@ DeepSeek 自 **2026-08-17** 起实行峰谷定价：
 - **持久化队列**：SQLite 本地存储（Node 内置 `node:sqlite`，零原生依赖），ACID 事务，Harness 重启后任务不丢失。
 - **时间调度**：内置官方峰谷时间表（可热更新），每 30s 检查一次；进入空闲窗口瞬间唤醒队列，高峰前 10 分钟停止派发新任务，跨入高峰自动挂起（`paused`），下个空闲窗口恢复。
 - **异步执行器**：信号量限流（默认并发 5），429/5xx 指数退避重试（默认 3 次，单层重试），单请求超时 30 分钟，全程不阻塞主界面。
+- **会话内执行（B 方案）**：`execution_mode=session` 时，错峰任务在 Harness **原生会话**里唤醒 agent 执行——流式输出、中间步骤、可打断、可续聊，全程可见；执行后从会话事件提取文本与 token 用量完成计费。`execution_mode=direct` 则保持静默直连 API（批量场景）。
 - **计费核算**：从 API `usage` 解析 tokens（含缓存命中），按**请求发起时刻**判定峰谷（与 DeepSeek 服务端口径一致），高峰按原价、空闲按 50%；结果写回本地 `results/<task_id>.md`。
 - **账单面板**：`offpeak_report` 输出日/周/月累计：执行次数、实际花费、高峰原价、节省金额、等效免费 tokens。
 - **通知事件**：`offpeak/task-completed`、`offpeak/task-failed` 等事件可被其他插件监听；超过 24 小时未执行的滞留任务启动时提醒。
@@ -65,6 +66,7 @@ API Key 三种来源（优先级从高到低）：`cordis.yml` 插件配置 `api
 | `retry_attempts` | `3` | 指数退避重试次数 |
 | `backoff_base_ms` | `2000` | 退避基准延迟 |
 | `request_timeout_ms` | `1800000` | 单请求超时（30 分钟） |
+| `execution_mode` | `session` | `session` = 唤醒 Harness 会话原生执行；`direct` = 直接调 API 静默执行 |
 | `stop_before_peak_minutes` | `10` | 高峰前停止派发新任务 |
 | `check_interval_ms` | `30000` | 调度检查间隔 |
 | `discount_rate` | `0.5` | 空闲折扣（官方 = 高峰一半） |
@@ -138,6 +140,17 @@ node scripts/verify-panel-render.mjs # 真实浏览器渲染设置页面板（�
 3. 高峰时段不触发 API —— `shouldStopBeforePeak` 与执行器挂起逻辑测试覆盖。
 4. 节省金额准确（误差 < 0.01 元）—— 计费引擎按官方价格表与 usage 计算。
 5. 重启后任务不丢 —— SQLite 文件持久化测试覆盖。
+
+## 会话内执行（B 方案）
+
+默认 `execution_mode=session`：空闲时段到来时，调度器通过 `agents.resume/create` 唤醒（或新建）一个 Harness 会话，把任务作为用户消息发进去，agent 在原生会话里正常执行。因此：
+
+- **过程可见**：流式思考与回复、工具调用全部出现在会话页面。
+- **可打断**：任务执行期间可直接取消，中止在途回合。
+- **可续聊**：结果留在会话里，直接追问“再展开一点”即可继续。
+- **计费一致**：从会话事件提取 `assistant/message` 的 usage（含缓存命中），按请求发起时刻计算节省。
+
+批量静默场景（如睡前丢 100 篇摘要）可用 `offpeak_settings` 把 `execution_mode` 切到 `direct`。
 
 ## 安全与可靠性（2026-08 审计修复）
 

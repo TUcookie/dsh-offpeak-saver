@@ -35,6 +35,8 @@ export interface Config {
   backoff_base_ms: number
   /** 单次 API 请求超时（毫秒），默认 30 分钟。 */
   request_timeout_ms: number
+  /** 任务执行模式：session = 唤醒 Harness 会话执行（原生直播）；direct = 直接调 API（静默批量）。 */
+  execution_mode: 'session' | 'direct'
   /** 高峰开始前多少分钟停止派发新任务。 */
   stop_before_peak_minutes: number
   /** 调度器检查间隔（毫秒）。 */
@@ -73,6 +75,7 @@ export const DEFAULT_CONFIG: Config = {
   retry_attempts: 3,
   backoff_base_ms: 2000,
   request_timeout_ms: 1_800_000,
+  execution_mode: 'session',
   stop_before_peak_minutes: 10,
   check_interval_ms: 30_000,
   discount_rate: 0.5,
@@ -226,10 +229,17 @@ export function sanitizeHotValue(key: string, rawValue: string): unknown {
     case 'retry_attempts':
     case 'backoff_base_ms':
     case 'request_timeout_ms':
+    case 'execution_mode':
     case 'stop_before_peak_minutes':
     case 'check_interval_ms':
     case 'stale_hours':
     case 'lease_ms': {
+      if (key === 'execution_mode') {
+        if (parsed !== 'session' && parsed !== 'direct') {
+          throw new Error('offpeak-saver: execution_mode 只能是 session 或 direct')
+        }
+        return parsed
+      }
       const n = Number(parsed)
       if (!Number.isFinite(n) || n < 0) throw new Error(`offpeak-saver: ${key} 必须是非负数`)
       return n

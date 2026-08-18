@@ -19,6 +19,7 @@ import { DeepSeekClient } from './client.js'
 import { openDatabase, TaskStore, type TaskPayload, type TaskRow } from './db.js'
 import { TaskExecutor, type CoreEvent } from './executor.js'
 import { buildReport, renderReport, type ReportPeriod, type SavingsReport } from './reports.js'
+import type { SessionRunner } from './session-runner.js'
 import { isPeak, nextOffPeakStart, parsePeakHours, type PeakWindow } from './time.js'
 
 export type { CoreEvent, ReportPeriod, SavingsReport }
@@ -29,6 +30,8 @@ export interface CoreHooks {
   apiKeyResolver?: () => Promise<string | undefined>
   /** 时钟注入（测试用）。 */
   now?: () => Date
+  /** 会话内执行器（B 方案）；dsh 环境传入，CLI/测试可留空回退 direct。 */
+  sessionRunner?: SessionRunner
 }
 
 export type Priority = 0 | 1 | 2
@@ -112,6 +115,7 @@ export class OffPeakSaver {
     })
     this.executor = new TaskExecutor(this.store, this.client, () => this.config, {
       isClosed: () => this.closed || this.stopping,
+      sessionRunner: this.hooks.sessionRunner,
       onEvent: (event) => this.emit(event),
     })
   }
@@ -293,6 +297,11 @@ export class OffPeakSaver {
   /** 当前处于高峰还是空闲时段。 */
   currentPhase(): 'peak' | 'offpeak' {
     return isPeak(new Date(), this.windows, this.config.timezone_offset_hours) ? 'peak' : 'offpeak'
+  }
+
+  /** 测试辅助：立即执行一轮队列 drain（等价于调度器空闲分支）。 */
+  async runPendingNowForTest(): Promise<void> {
+    await this.executor.drain()
   }
 
   private tick(): void {

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { OffPeakSaver } from '../src/core.js'
+import type { SessionRunner } from '../src/session-runner.js'
 import { minutesOf } from '../src/time.js'
 
 const TMP_DIRS: string[] = []
@@ -302,5 +303,59 @@ describe('OffPeakSaver', () => {
     const longView = saver.getTask(long.task.id)
     expect(longView?.title).toHaveLength(31)
     expect(longView?.title.endsWith('…')).toBe(true)
+  })
+
+  it('会话内执行（B）：任务在原生会话跑完，计费/落盘与 direct 一致', async () => {
+    const runner: SessionRunner = {
+      runTask: async (payload, _signal, model) => {
+        expect(payload.prompt).toContain('直播任务')
+        expect(model).toBe('deepseek-v4-flash')
+        return {
+          content: '这是会话内执行产出的结果',
+          usage: { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 200_000 },
+          sessionId: 'offpeak-test-session',
+        }
+      },
+      cancelAll: () => {},
+    }
+    const saver = makeSaver(
+      { peak_hours: offPeakHours(), execution_mode: 'session' },
+      { sessionRunner: runner },
+    )
+    const result = await saver.submitTask({ prompt: '#offpeak 直播任务', session_id: 'orig-session' }, 1)
+    // 空闲窗口内 submit 会同步 drain？submitTask 只入队；手动触发执行
+    expect(result.task.status).toBe('pending')
+    await saver.runPendingNowForTest()
+    const view = saver.getTask(result.task.id)
+    expect(view?.status).toBe('completed')
+    expect(view?.savings).toBeCloseTo(5.71, 2)
+    expect(readFileSync(view?.result_path!, 'utf8')).toContain('会话内执行产出的结果')
+  })
+
+  it('会话内执行被取消 → 任务 failed 且不再重试', async () => {
+    let releaseAbort!: () => void
+    const aborted = new Promise<void>((resolve) => { releaseAbort = resolve })
+    const runner: SessionRunner = {
+      runTask: async (_payload, signal) => {
+        signal.addEventListener('abort', () => releaseAbort())
+        await aborted
+        const { CancelledSessionError } = await import('../src/session-runner.js')
+        throw new CancelledSessionError()
+      },
+      cancelAll: () => {},
+    }
+    const saver = makeSaver(
+      { peak_hours: offPeakHours(), execution_mode: 'session', stop_before_peak_minutes: 0 },
+      { sessionRunner: runner },
+    )
+    const submitPromise = saver.submitTask({ prompt: '会被取消的任务' }, 0)
+    await vi.waitFor(() => {
+      expect(saver.listTasks().running.length).toBe(1)
+    })
+    const runningId = saver.listTasks().running[0]!.id
+    saver.cancelTask(runningId)
+    await submitPromise
+    expect(saver.getTask(runningId)?.status).toBe('failed')
+    expect(String(saver.getTask(runningId)?.error_msg)).toContain('取消')
   })
 })

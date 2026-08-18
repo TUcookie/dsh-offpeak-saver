@@ -14,6 +14,7 @@ import { createRequire } from 'node:module'
 import { DEFAULT_PRICING, OFFICIAL_PEAK_HOURS, type Config as RuntimeConfig, type PricingEntry } from './config.js'
 import { OffPeakSaver } from './core.js'
 import { registerPanelHttpWhenReady } from './http.js'
+import { createDshSessionRunner } from './session-runner.js'
 import { createTools } from './tools.js'
 import { satisfiesCaret } from './version.js'
 
@@ -62,6 +63,7 @@ export const Config: Schema<Config> = Schema.object({
   api_key: Schema.string().default(''),
   base_url: Schema.string().default('https://api.deepseek.com'),
   default_model: Schema.string().default('deepseek-v4-flash'),
+  execution_mode: Schema.union(['session', 'direct']).default('session'),
   peak_hours: Schema.array(Schema.string()).default([...OFFICIAL_PEAK_HOURS]),
   timezone_offset_hours: Schema.number().default(8),
   max_concurrency: Schema.number().default(5),
@@ -89,7 +91,16 @@ export const Config: Schema<Config> = Schema.object({
 export function apply(ctx: Context, config: Config): void {
   assertPeerCompatible()
 
+  // 会话内执行（B 方案）：复用 dsh agents 服务，任务在原生会话里执行
+  let sessionRunner: import('./session-runner.js').SessionRunner | undefined
+  try {
+    sessionRunner = createDshSessionRunner(ctx)
+  } catch {
+    sessionRunner = undefined
+  }
+
   const saver = new OffPeakSaver(config, {
+    sessionRunner,
     apiKeyResolver: async () => {
       // 官方凭证通道：~/.dsh/.credentials.yaml 或启动环境里的 DEEPSEEK_API_KEY
       const credentials = ctx.get('credentials') as

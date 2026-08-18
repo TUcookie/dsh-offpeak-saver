@@ -4,6 +4,8 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2022", "DOM"],
+    "jsx": "react-jsx",
+    "allowImportingTsExtensions": true,
     "types": ["node"],
     "strict": true,
     "noImplicitOverride": true,

@@ -1,5 +1,6 @@
 /**
- * 异步执行器：并发控制、指数退避重试、跨入高峰自动挂起、结果落盘。
+ * 异步执行器：并发控制、单层指数退避重试、按请求发起时刻计费、
+ * 跨入高峰自动挂起、本地持久化错误绝不重试、优雅关闭。
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -8,7 +9,7 @@ import { computeCosts, type Usage } from './billing.js'
 import { ApiError, CancelledError, DeepSeekClient } from './client.js'
 import { resolveResultsDir, type Config, type PricingEntry } from './config.js'
 import { type TaskPayload, type TaskRow, TaskStore } from './db.js'
-import { isPeak, parsePeakHours, type PeakWindow } from './time.js'
+import { isPeak, parsePeakHours, shouldStopBeforePeak, type PeakWindow } from './time.js'
 
 export type CoreEvent =
   | { type: 'log'; level: 'info' | 'warn' | 'error'; message: string }
@@ -24,28 +25,27 @@ export type CoreEvent =
 
 export interface ExecutorHooks {
   onEvent?: (event: CoreEvent) => void
+  /** 插件/核心正在关闭时禁止一切重试。 */
+  isClosed?: () => boolean
 }
 
+/** 动态信号量：limit 变化即时生效（max_concurrency 热更新）。 */
 class Semaphore {
-  private available: number
+  private active = 0
   private readonly waiters: Array<() => void> = []
 
-  constructor(limit: number) {
-    this.available = Math.max(1, limit)
-  }
+  constructor(private readonly getLimit: () => number) {}
 
   async acquire(): Promise<() => void> {
-    if (this.available > 0) {
-      this.available--
-      return () => {
-        this.available++
-        this.waiters.shift()?.()
-      }
+    while (this.active >= this.getLimit()) {
+      await new Promise<void>((resolve) => this.waiters.push(resolve))
     }
-    await new Promise<void>((resolve) => this.waiters.push(resolve))
-    this.available--
+    this.active++
+    let released = false
     return () => {
-      this.available++
+      if (released) return
+      released = true
+      this.active--
       this.waiters.shift()?.()
     }
   }
@@ -53,6 +53,8 @@ class Semaphore {
 
 export class TaskExecutor {
   private readonly semaphore: Semaphore
+  private readonly inFlight = new Map<string, AbortController>()
+  private readonly settling = new Set<Promise<void>>()
 
   constructor(
     private readonly store: TaskStore,
@@ -60,7 +62,7 @@ export class TaskExecutor {
     private readonly getConfig: () => Config,
     private readonly hooks: ExecutorHooks = {},
   ) {
-    this.semaphore = new Semaphore(getConfig().max_concurrency)
+    this.semaphore = new Semaphore(() => this.config.max_concurrency)
   }
 
   private get config(): Config {
@@ -75,9 +77,16 @@ export class TaskExecutor {
     this.hooks.onEvent?.(event)
   }
 
-  /** 拉取一批待执行任务（仅空闲时段），返回启动数量。 */
+  private get closed(): boolean {
+    return this.hooks.isClosed?.() ?? false
+  }
+
+  /** 拉取一批待执行任务（空闲时段 + 未进入高峰前停止派发区间）。 */
   async drain(): Promise<number> {
-    if (isPeak(new Date(), this.windows, this.config.timezone_offset_hours)) return 0
+    const now = new Date()
+    if (shouldStopBeforePeak(now, this.windows, this.config.timezone_offset_hours, this.config.stop_before_peak_minutes)) {
+      return 0
+    }
     const requeued = this.store.requeuePaused()
     if (requeued > 0) {
       this.emit({ type: 'log', level: 'info', message: `已将 ${requeued} 个暂停任务重新加入队列` })
@@ -90,35 +99,70 @@ export class TaskExecutor {
     return batch.length
   }
 
-  /** 执行单个任务；若已跨入高峰则挂起等待下一窗口。 */
+  /** 执行单个任务：原子认领；非实时任务在高峰/高峰前停止派发区间内不认领。 */
   async runTask(taskId: string): Promise<void> {
+    const task = this.store.getTask(taskId)
+    if (task === null || task.status !== 'pending') return
+    const now = new Date()
+    if (
+      task.priority !== 0
+      && shouldStopBeforePeak(now, this.windows, this.config.timezone_offset_hours, this.config.stop_before_peak_minutes)
+    ) {
+      // 未到可执行窗口，保持 pending 等待下一次 drain
+      return
+    }
+
     const release = await this.semaphore.acquire()
     try {
-      const task = this.store.getTask(taskId)
-      if (task === null || task.status !== 'pending') return
-      if (isPeak(new Date(), this.windows, this.config.timezone_offset_hours)) {
-        this.store.markPaused(taskId, '已进入高峰时段，等待下一空闲窗口')
-        this.emit({ type: 'task-paused', task: this.requireTask(taskId), reason: 'peak window' })
-        return
+      const claimed = this.store.claimTask(taskId, now.toISOString())
+      if (claimed === null) return // 已被其他进程/实例认领
+      this.emit({ type: 'task-started', task: claimed })
+
+      const controller = new AbortController()
+      this.inFlight.set(taskId, controller)
+      const run = this.executeWithRetries(claimed, controller.signal)
+      this.settling.add(run)
+      try {
+        await run
+      } finally {
+        this.settling.delete(run)
+        this.inFlight.delete(taskId)
       }
-      this.store.markRunning(taskId, new Date().toISOString())
-      this.emit({ type: 'task-started', task: this.requireTask(taskId) })
-      await this.executeWithRetries(task)
     } finally {
       release()
     }
   }
 
-  private async executeWithRetries(task: TaskRow): Promise<void> {
+  /** 取消在途请求（running 任务）。 */
+  abortTask(taskId: string): boolean {
+    const controller = this.inFlight.get(taskId)
+    if (controller === undefined) return false
+    controller.abort()
+    return true
+  }
+
+  /** 停止时中止所有在途请求并等待收尾。 */
+  async abortAllAndSettle(): Promise<void> {
+    for (const controller of this.inFlight.values()) controller.abort()
+    await Promise.allSettled([...this.settling])
+  }
+
+  private async executeWithRetries(task: TaskRow, signal: AbortSignal): Promise<void> {
     const payload = parsePayload(task.payload)
     const model = payload.model ?? this.config.default_model
     const pricing = this.pricingFor(model)
+    const isRealtime = task.priority === 0
 
-    for (let attempt = 0; attempt <= this.config.retry_attempts; attempt++) {
-      if (isPeak(new Date(), this.windows, this.config.timezone_offset_hours)) {
-        this.pause(task.id, '已跨入高峰时段，暂停等待下一空闲窗口')
+    for (let attempt = 0; ; attempt++) {
+      if (this.closed) {
+        this.fail(task.id, '插件正在关闭，任务终止', 'shutdown')
         return
       }
+      if (!isRealtime && shouldStopBeforePeak(new Date(), this.windows, this.config.timezone_offset_hours, this.config.stop_before_peak_minutes)) {
+        this.pause(task.id, '已进入高峰时段或高峰前停止派发区间，暂停等待下一空闲窗口')
+        return
+      }
+
       try {
         const result = await this.client.chat(
           {
@@ -127,18 +171,25 @@ export class TaskExecutor {
             temperature: payload.params?.temperature,
             max_tokens: payload.params?.max_tokens,
           },
+          signal,
         )
         const usage: Usage = {
           input_tokens: result.usage.input_tokens,
           output_tokens: result.usage.output_tokens,
           cache_hit_tokens: result.usage.cache_hit_tokens,
         }
-        const costs = computeCosts(usage, pricing, this.config.discount_rate)
-        const resultPath = writeResult(this.config, task.id, result.content ?? '')
-        const completedAt = new Date().toISOString()
+        // 计费时段以“请求发起时刻”为准，而非完成时刻（DeepSeek 服务端口径）
+        const effectiveDiscount = isPeak(result.startedAt, this.windows, this.config.timezone_offset_hours)
+          ? 1
+          : this.config.discount_rate
+        const costs = computeCosts(usage, pricing, effectiveDiscount)
+        const resultPath = writeResult(this.config, task.id, payload, result.content)
         this.store.markCompleted(task.id, {
           status: 'completed',
-          completed_at: completedAt,
+          model,
+          completed_at: new Date().toISOString(),
+          billed_at: result.startedAt.toISOString(),
+          discount_used: effectiveDiscount,
           input_tokens: usage.input_tokens,
           output_tokens: usage.output_tokens,
           cache_hit_tokens: usage.cache_hit_tokens,
@@ -152,24 +203,43 @@ export class TaskExecutor {
         return
       } catch (error) {
         if (error instanceof CancelledError) {
-          this.store.markFailed(task.id, '任务被取消', new Date().toISOString())
-          this.emit({ type: 'task-failed', task: this.requireTask(task.id), error: 'cancelled' })
+          this.fail(task.id, '请求被取消（用户取消或插件关闭）', 'cancelled')
           return
         }
-        const retryable = error instanceof ApiError ? error.retryable : true
-        const message = error instanceof Error ? error.message : String(error)
-        if (attempt < this.config.retry_attempts && retryable && !isPeak(new Date(), this.windows, this.config.timezone_offset_hours)) {
-          this.store.bumpRetry(task.id)
-          const backoff = this.config.backoff_base_ms * 2 ** attempt * (0.5 + Math.random())
-          this.emit({ type: 'log', level: 'warn', message: `任务 ${task.id} 第 ${attempt + 1} 次失败，${Math.round(backoff / 1000)}s 后重试：${message}` })
-          await sleep(backoff)
-          continue
+        if (error instanceof ApiError) {
+          const retryable = error.retryable
+          const message = error.message
+          const maxRetries = this.config.retry_attempts
+          if (
+            retryable
+            && attempt < maxRetries
+            && !this.closed
+            && (isRealtime || !shouldStopBeforePeak(new Date(), this.windows, this.config.timezone_offset_hours, this.config.stop_before_peak_minutes))
+          ) {
+            this.store.bumpRetry(task.id)
+            const backoff = this.config.backoff_base_ms * 2 ** attempt * (0.5 + Math.random())
+            this.emit({
+              type: 'log',
+              level: 'warn',
+              message: `任务 ${task.id} 第 ${attempt + 1} 次失败，${Math.round(backoff / 1000)}s 后重试：${message}`,
+            })
+            await sleep(backoff, signal)
+            continue
+          }
+          this.fail(task.id, message, 'api')
+          return
         }
-        this.store.markFailed(task.id, message, new Date().toISOString())
-        this.emit({ type: 'task-failed', task: this.requireTask(task.id), error: message })
+        // 非 ApiError = 本地持久化/写盘错误：API 已成功，绝不重试（避免二次扣费）
+        const message = error instanceof Error ? error.message : String(error)
+        this.fail(task.id, `本地持久化错误（API 已返回，未重试）：${message}`, 'local')
         return
       }
     }
+  }
+
+  private fail(taskId: string, message: string, kind: 'api' | 'local' | 'cancelled' | 'shutdown'): void {
+    this.store.markFailed(taskId, message, new Date().toISOString())
+    this.emit({ type: 'task-failed', task: this.requireTask(taskId), error: message })
   }
 
   private pause(taskId: string, reason: string): void {
@@ -200,14 +270,32 @@ function parsePayload(raw: string): TaskPayload {
   }
 }
 
-function writeResult(config: Config, taskId: string, content: string): string {
-  const dir = resolveResultsDir(config)
-  mkdirSync(dir, { recursive: true })
-  const resultPath = path.join(dir, `${taskId}.md`)
+function writeResult(config: Config, taskId: string, payload: TaskPayload, content: string): string {
+  let resultPath: string
+  if (payload.output_path && payload.output_path.trim() !== '') {
+    resultPath = path.resolve(payload.output_path)
+  } else {
+    resultPath = path.join(resolveResultsDir(config), `${taskId}.md`)
+  }
+  mkdirSync(path.dirname(resultPath), { recursive: true })
   writeFileSync(resultPath, content, 'utf8')
   return resultPath
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new CancelledError())
+      return
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(new CancelledError())
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
 }

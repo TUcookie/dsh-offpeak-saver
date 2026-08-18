@@ -22,11 +22,12 @@ DeepSeek 自 **2026-08-17** 起实行峰谷定价：
 - **任务分流**：`offpeak_submit` 支持 `realtime` / `offpeak` / `background` 优先级；Prompt 中带 `#offpeak` / `#batch` 标签自动识别为错峰任务（`#realtime` 反之）。
 - **持久化队列**：SQLite 本地存储（Node 内置 `node:sqlite`，零原生依赖），ACID 事务，Harness 重启后任务不丢失。
 - **时间调度**：内置官方峰谷时间表（可热更新），每 30s 检查一次；进入空闲窗口瞬间唤醒队列，高峰前 10 分钟停止派发新任务，跨入高峰自动挂起（`paused`），下个空闲窗口恢复。
-- **异步执行器**：信号量限流（默认并发 5），429/5xx 指数退避重试（默认 3 次），单请求超时 30 分钟，全程不阻塞主界面。
-- **计费核算**：从 API `usage` 解析 tokens（含缓存命中），按高峰基准价 vs 实际价计算节省；结果写回本地 `results/<task_id>.md`。
+- **异步执行器**：信号量限流（默认并发 5），429/5xx 指数退避重试（默认 3 次，单层重试），单请求超时 30 分钟，全程不阻塞主界面。
+- **计费核算**：从 API `usage` 解析 tokens（含缓存命中），按**请求发起时刻**判定峰谷（与 DeepSeek 服务端口径一致），高峰按原价、空闲按 50%；结果写回本地 `results/<task_id>.md`。
 - **账单面板**：`offpeak_report` 输出日/周/月累计：执行次数、实际花费、高峰原价、节省金额、等效免费 tokens。
 - **通知事件**：`offpeak/task-completed`、`offpeak/task-failed` 等事件可被其他插件监听；超过 24 小时未执行的滞留任务启动时提醒。
 - **热更新**：`offpeak_settings` 可在线修改峰谷时段、折扣率、并发数、价格表，写入 `config.json`，重启后依然生效。
+- **Web 设置页面板（v0.2.0）**：Harness 设置里新增“错峰省钱”页，实时展示当前时段、下一空闲时段、今日/本周/本月节省、**正在执行的任务（开始时间、已执行时长、可直接取消）**、待执行任务、历史任务（含执行起止时间）与账单（日/周/月切换）。任务状态变化通过 SSE 实时推送，面板立即更新；另每 30 秒兜底轮询。
 
 ## 安装
 
@@ -37,7 +38,7 @@ cd dsh-offpeak-saver
 pnpm install
 pnpm run build
 pnpm pack
-dsh plugin --profile web add ./dsh-offpeak-saver-0.1.0.tgz
+dsh plugin --profile web add ./dsh-offpeak-saver-0.2.0.tgz
 dsh web --port 4099
 ```
 
@@ -51,7 +52,7 @@ dsh plugin --profile web add "link:$(pwd)"
 
 ## 配置
 
-API Key 三种来源（优先级从高到低）：`cordis.yml` 插件配置 `api_key` → `config.json` → 环境变量 `DEEPSEEK_API_KEY`。
+API Key 三种来源（优先级从高到低）：`cordis.yml` 插件配置 `api_key` → dsh `credentials` 服务（即 `~/.dsh/.credentials.yaml`，Web 设置页写入的密钥）→ 环境变量 `DEEPSEEK_API_KEY`。
 
 | 配置键 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -70,10 +71,13 @@ API Key 三种来源（优先级从高到低）：`cordis.yml` 插件配置 `api
 | `currency` | `CNY` | 金额展示币种 |
 | `db_path` | 默认数据目录 | SQLite 路径 |
 | `stale_hours` | `24` | 滞留任务提醒阈值 |
+| `lease_ms` | `1800000` | running 任务认领租约，超时视为进程崩溃并重置重试 |
 | `notify` | `true` | 发送完成/失败事件 |
 | `pricing` | V4 Flash/Pro 官方价 | 各模型高峰价（元/百万 tokens） |
 
-默认数据目录：`$DSH_HOME/data/offpeak-saver/`（未设置 DSH_HOME 时用 `~/.dsh-offpeak-saver/`）。
+> `base_url` 只能在 cordis.yml / 安装配置里设置（必须 https），**不支持热更新**——防止 API Key 被改址外发。`currency: USD` 仅切换展示符号，不换算汇率，金额始终按人民币计价。
+
+默认数据目录：`$DSH_HOME/data/offpeak-saver/`；dsh 运行时未设置 DSH_HOME 时，自动落到真实 Harness 主目录 `~/.dsh/data/offpeak-saver/`（本机即该路径），不存在时回退到 `~/.dsh-offpeak-saver/`。
 
 ## 工具
 
@@ -84,6 +88,20 @@ API Key 三种来源（优先级从高到低）：`cordis.yml` 插件配置 `api
 | `offpeak_report` | 日/周/月省钱账单 |
 | `offpeak_cancel` | 取消 pending/paused 任务 |
 | `offpeak_settings` | 查看/热更新配置 |
+
+API Key 永不返回明文：`offpeak_settings` 只显示脱敏值（如 `****3456`）。
+
+## Web 设置页面板
+
+安装并重启 `dsh web` 后，打开 [http://127.0.0.1:3080](http://127.0.0.1:3080) → 设置 → **错峰省钱**：
+
+- 顶部：当前时段徽章（高峰/空闲半价）与下一空闲时段。
+- 汇总卡片：今日/本周/本月节省、错峰执行次数、等效免费 Tokens、待执行任务数。
+- **正在执行**：运行中的任务带 LIVE 标记，显示开始时间与每秒刷新的已执行时长，可直接取消。
+- 待执行任务：排队中的任务列表，可直接取消。
+- 最近任务：最近 12 条（状态、Tokens、节省、执行起止时间、结果文件路径）。
+- 账单：日/周/月切换，展示执行次数、实际花费、高峰原价、节省、等效免费 Tokens。
+- 任务一启动/完成/失败，面板通过 SSE 立刻刷新；也可手动刷新；不足 1 分的金额显示 4 位小数，不会被抹成 ¥0.00。
 
 示例对话：
 
@@ -109,6 +127,7 @@ pnpm run build
 pnpm pack
 node scripts/integration-test.mjs   # 真实打包产物 + 真实 apply()/工具调用
 bash scripts/dsh-smoke.sh           # 全新 DSH profile 安装 + web 启动
+node scripts/verify-panel-render.mjs # 真实浏览器渲染设置页面板（需要系统 Chrome）
 ```
 
 验收标准对照：
@@ -118,6 +137,17 @@ bash scripts/dsh-smoke.sh           # 全新 DSH profile 安装 + web 启动
 3. 高峰时段不触发 API —— `shouldStopBeforePeak` 与执行器挂起逻辑测试覆盖。
 4. 节省金额准确（误差 < 0.01 元）—— 计费引擎按官方价格表与 usage 计算。
 5. 重启后任务不丢 —— SQLite 文件持久化测试覆盖。
+
+## 安全与可靠性（2026-08 审计修复）
+
+- **计费时刻**：折扣按“请求发起时刻”判定（`billed_at`），跨峰谷边界不再产生假节省。
+- **单层重试**：客户端只做超时/网络错误分类，重试统一由执行器执行（最坏 1+retry_attempts 次调用）；超时类错误不重试，避免“服务器已扣费但本地超时”的二次扣费。
+- **本地错误不重试**：API 成功后的写库/写盘失败直接标记 failed，绝不再次调用 API。
+- **原子认领**：`UPDATE ... WHERE status='pending'` 原子认领，多进程共享数据库也不会双重执行；`claimed_at` 租约超时后自动恢复。
+- **优雅关闭**：`stop()` 先中止在途请求、等待收尾，再关数据库；关闭后禁止一切重试。
+- **密钥保护**：`api_key` 输出脱敏；`base_url` 移出热更新白名单且强制 https；`config.json` 只合并白名单键，不能注入 `api_key`；`pricing` 逐项校验为非负有限数。
+- **时段校验**：非法小时/分钟（如 `99:00`）直接拒绝，杜绝“全天误判为空闲”。
+- **usage 校验**：缺失/非法 usage 与空内容按失败处理，不再静默记 ¥0。
 
 ## 架构
 

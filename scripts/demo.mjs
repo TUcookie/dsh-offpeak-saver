@@ -102,4 +102,4 @@ if (command === 'submit') {
   process.exit(1)
 }
 
-saver.stop()
+await saver.stop()

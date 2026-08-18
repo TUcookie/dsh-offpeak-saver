@@ -29,6 +29,12 @@ describe('parsePeakHours', () => {
     expect(() => parsePeakHours(['9-12'])).toThrow()
     expect(() => parsePeakHours(['09:00-09:00'])).toThrow()
   })
+
+  it('拒绝越界数值（P1-5：99:00 曾导致全天按空闲计费）', () => {
+    expect(() => parsePeakHours(['99:00-99:01'])).toThrow()
+    expect(() => parsePeakHours(['09:00-24:00'])).toThrow()
+    expect(() => parsePeakHours(['09:60-10:00'])).toThrow()
+  })
 })
 
 describe('isPeak / isOffPeak（官方时段）', () => {
@@ -106,5 +112,11 @@ describe('跨零点窗口', () => {
   it('凌晨返回当晚高峰起点', () => {
     const next = nextPeakStart(at(3, 0), overnight, TZ)
     expect(next?.label).toBe('今日 22:00')
+  })
+
+  it('跨零点窗口：nextOffPeakStart 补查次日结束点（边界修复）', () => {
+    const next = nextOffPeakStart(at(23, 0), overnight, TZ)
+    expect(next?.label).toBe('明日 02:00')
+    expect(next?.minutes).toBe(180)
   })
 })

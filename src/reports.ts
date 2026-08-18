@@ -2,7 +2,7 @@
  * 累计账单：日 / 周 / 月汇总。
  */
 
-import { equivalentFreeTokens } from './billing.js'
+import { equivalentFreeTokens, round6 } from './billing.js'
 import type { Config } from './config.js'
 import { type TaskStore } from './db.js'
 
@@ -76,9 +76,9 @@ export function buildReport(
     input_tokens: billing.input_tokens,
     output_tokens: billing.output_tokens,
     cache_hit_tokens: billing.cache_hit_tokens,
-    cost_actual: round2(billing.cost_actual),
-    cost_baseline: round2(billing.cost_baseline),
-    savings: round2(billing.savings),
+    cost_actual: round6(billing.cost_actual),
+    cost_baseline: round6(billing.cost_baseline),
+    savings: round6(billing.savings),
     equivalent_free_tokens: equivalentFreeTokens(billing.savings, pricing, config.discount_rate),
     currency: config.currency,
   }
@@ -99,8 +99,4 @@ export function renderReport(report: SavingsReport): string {
     lines.push(`⏳ 还有 ${report.pending_tasks} 个任务等待空闲时段执行`)
   }
   return lines.join('\n')
-}
-
-function round2(value: number): number {
-  return Math.round((value + Number.EPSILON) * 100) / 100
 }

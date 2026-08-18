@@ -13,6 +13,7 @@ import Schema from '@deepseek-ai/schemastery'
 import { createRequire } from 'node:module'
 import { DEFAULT_PRICING, OFFICIAL_PEAK_HOURS, type Config as RuntimeConfig, type PricingEntry } from './config.js'
 import { OffPeakSaver } from './core.js'
+import { registerPanelHttpWhenReady } from './http.js'
 import { createTools } from './tools.js'
 import { satisfiesCaret } from './version.js'
 
@@ -73,6 +74,7 @@ export const Config: Schema<Config> = Schema.object({
   currency: Schema.union(['CNY', 'USD']).default('CNY'),
   db_path: Schema.string().default(''),
   stale_hours: Schema.number().default(24),
+  lease_ms: Schema.number().default(1_800_000),
   notify: Schema.boolean().default(true),
   pricing: Schema.dict(
     Schema.union([
@@ -88,6 +90,14 @@ export function apply(ctx: Context, config: Config): void {
   assertPeerCompatible()
 
   const saver = new OffPeakSaver(config, {
+    apiKeyResolver: async () => {
+      // 官方凭证通道：~/.dsh/.credentials.yaml 或启动环境里的 DEEPSEEK_API_KEY
+      const credentials = ctx.get('credentials') as
+        | { resolve: (ref: string) => Promise<{ value: string; source: string } | undefined> }
+        | undefined
+      const hit = await credentials?.resolve('DEEPSEEK_API_KEY')
+      return hit?.value
+    },
     onEvent: (event) => {
       if (event.type === 'log') {
         const logger =
@@ -105,12 +115,14 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => {
     const disposers = createTools(saver).map((tool) => ctx.tools.register(tool))
+    const disposeHttp = registerPanelHttpWhenReady(ctx, saver)
     saver.start()
-    return () => {
+    return async () => {
       for (const dispose of disposers) {
         if (typeof dispose === 'function') dispose()
       }
-      saver.stop()
+      disposeHttp()
+      await saver.stop()
     }
   })
 }

@@ -1,0 +1,104 @@
+/** 面板数据 API（同源 /offpeak-saver/*）。 */
+
+export interface PanelTask {
+  id: string
+  title: string
+  model: string
+  priority: number
+  status: string
+  created_at: string
+  executed_at: string | null
+  completed_at: string | null
+  billed_at: string | null
+  retry_count: number
+  input_tokens: number
+  output_tokens: number
+  cost_actual: number
+  cost_baseline: number
+  savings: number
+  error_msg: string | null
+  result_path: string | null
+  prompt: string
+}
+
+export interface PanelReport {
+  period: string
+  period_label: string
+  executions: number
+  completed_tasks: number
+  failed_tasks: number
+  pending_tasks: number
+  input_tokens: number
+  output_tokens: number
+  cost_actual: number
+  cost_baseline: number
+  savings: number
+  equivalent_free_tokens: number
+  currency: 'CNY' | 'USD'
+}
+
+export interface PanelOverview {
+  now: string
+  phase: 'peak' | 'offpeak'
+  nextOffPeak: string | null
+  pending: PanelTask[]
+  running: PanelTask[]
+  recent: PanelTask[]
+  reports: {
+    day: PanelReport
+    week: PanelReport
+    month: PanelReport
+  }
+}
+
+interface OkEnvelope<T> {
+  ok: true
+  value: T
+}
+
+interface FailEnvelope {
+  ok: false
+  error: string
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, {
+    ...init,
+    headers: {
+      accept: 'application/json',
+      ...(init?.body !== undefined ? { 'content-type': 'application/json' } : {}),
+      ...init?.headers,
+    },
+  })
+  const data = (await response.json()) as OkEnvelope<T> | FailEnvelope
+  if (data.ok) return data.value
+  throw new Error(data.error)
+}
+
+export function loadOverview(): Promise<PanelOverview> {
+  return request<PanelOverview>('/offpeak-saver/overview')
+}
+
+export function cancelTask(taskId: string): Promise<{ id: string; status: string }> {
+  return request<{ id: string; status: string }>('/offpeak-saver/cancel', {
+    method: 'POST',
+    body: JSON.stringify({ taskId }),
+  })
+}
+
+export function money(amount: number, currency: 'CNY' | 'USD'): string {
+  const symbol = currency === 'CNY' ? '¥' : '$'
+  // 不足 1 分钱的金额显示 4 位小数，避免“省了钱但显示 ¥0.00”
+  const digits = amount !== 0 && Math.abs(amount) < 0.01 ? 4 : 2
+  return `${symbol}${amount.toFixed(digits)}`
+}
+
+export function formatClock(iso: string): string {
+  try {
+    const date = new Date(iso)
+    const p = (n: number): string => String(n).padStart(2, '0')
+    return `${p(date.getMonth() + 1)}-${p(date.getDate())} ${p(date.getHours())}:${p(date.getMinutes())}`
+  } catch {
+    return iso
+  }
+}

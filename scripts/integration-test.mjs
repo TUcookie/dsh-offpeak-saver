@@ -15,7 +15,7 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const tgz = path.resolve(process.argv[2] ?? path.join(root, 'dsh-offpeak-saver-0.1.0.tgz'))
+const tgz = path.resolve(process.argv[2] ?? path.join(root, 'dsh-offpeak-saver-0.2.0.tgz'))
 
 if (!existsSync(tgz)) {
   console.error(`[integration] missing tarball: ${tgz}`)
@@ -74,6 +74,10 @@ function installAndLoad(name, dshToolsVersion) {
   const pluginIndex = path.join(dir, 'node_modules', 'dsh-offpeak-saver', 'lib', 'index.js')
   if (!existsSync(pluginIndex)) {
     throw new Error('packed plugin entry lib/index.js missing after install')
+  }
+  const clientIndex = path.join(dir, 'node_modules', 'dsh-offpeak-saver', 'lib', 'client.js')
+  if (!existsSync(clientIndex)) {
+    throw new Error('packed client bundle lib/client.js missing after install')
   }
   return { dir, pluginIndex }
 }
@@ -176,6 +180,9 @@ async function happyScenario() {
   if (!String(settingsResult.settings).includes('peak_hours')) {
     throw new Error('settings get missing config')
   }
+  if (String(settingsResult.settings).includes('sk-integration-test')) {
+    throw new Error('settings leaked the plaintext API key')
+  }
   console.log('PASS offpeak_settings readable')
 
   const cancel = registered.find((definition) => definition.name === 'offpeak_cancel')
@@ -191,7 +198,7 @@ async function happyScenario() {
   }
   console.log(`PASS emitted ${offpeakEvents.length} offpeak/* events`)
 
-  disposer()
+  await disposer()
   console.log('PASS packed artifact loaded, tools callable end-to-end, cleanup ran')
   rmSync(dir, { recursive: true, force: true })
   rmSync(dataDir, { recursive: true, force: true })

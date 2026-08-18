@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SRC_TGZ="${1:-$ROOT/dsh-offpeak-saver-0.1.0.tgz}"
+SRC_TGZ="${1:-$ROOT/dsh-offpeak-saver-0.2.0.tgz}"
 TMP="$(mktemp -d)"
 TGZ="$TMP/plugin.tgz"
 cp "$SRC_TGZ" "$TGZ"

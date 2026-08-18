@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -8,9 +8,9 @@ import { minutesOf } from '../src/time.js'
 const TMP_DIRS: string[] = []
 const SAVERS: OffPeakSaver[] = []
 
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllGlobals()
-  for (const saver of SAVERS.splice(0)) saver.stop()
+  for (const saver of SAVERS.splice(0)) await saver.stop()
   while (TMP_DIRS.length > 0) {
     removeDirWithRetry(TMP_DIRS.pop()!)
   }
@@ -34,12 +34,19 @@ function tmpDbPath(): string {
   return path.join(dir, 'offpeak.db')
 }
 
-function makeSaver(config: Partial<ConstructorParameters<typeof OffPeakSaver>[0]> = {}): OffPeakSaver {
-  const saver = new OffPeakSaver({
-    api_key: 'sk-test',
-    db_path: tmpDbPath(),
-    ...config,
-  })
+function makeSaver(
+  config: Partial<ConstructorParameters<typeof OffPeakSaver>[0]> = {},
+  hooks: ConstructorParameters<typeof OffPeakSaver>[1] = {},
+): OffPeakSaver {
+  const saver = new OffPeakSaver(
+    {
+      api_key: 'sk-test',
+      db_path: tmpDbPath(),
+      stop_before_peak_minutes: 0,
+      ...config,
+    },
+    hooks,
+  )
   SAVERS.push(saver)
   return saver
 }
@@ -107,12 +114,14 @@ describe('OffPeakSaver', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('高峰时刻提交实时任务会被挂起', async () => {
+  it('高峰时刻实时任务立即执行（实时语义不受窗口约束）', async () => {
     const fetchMock = stubFetch()
     const saver = makeSaver({ peak_hours: peakHours() })
     const result = await saver.submitTask({ prompt: '立即执行' }, 0)
-    expect(result.task.status).toBe('paused')
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(result.task.status).toBe('completed')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(result.task.savings).toBe(0)
+    expect(result.task.cost_actual).toBeCloseTo(11.42, 2)
   })
 
   it('热更新高峰时段后，调度器在空闲窗口自动执行队列', async () => {
@@ -134,7 +143,7 @@ describe('OffPeakSaver', () => {
     const dbPath = tmpDbPath()
     const first = makeSaver({ db_path: dbPath, peak_hours: peakHours() })
     const queued = await first.submitTask({ prompt: '持久化测试' }, 1)
-    first.stop()
+    await first.stop()
 
     const second = makeSaver({ db_path: dbPath, peak_hours: peakHours() })
     expect(second.getTask(queued.task.id)?.status).toBe('pending')
@@ -165,7 +174,7 @@ describe('OffPeakSaver', () => {
     expect(saver.currentConfig.discount_rate).toBe(0.3)
     expect(() => saver.updateSetting('peak_hours', '["09:00"]')).toThrow()
     expect(() => saver.updateSetting('api_key', 'x')).toThrow()
-    saver.stop()
+    await saver.stop()
 
     const reloaded = makeSaver({ db_path: dbPath })
     expect(reloaded.currentConfig.discount_rate).toBe(0.3)
@@ -179,5 +188,102 @@ describe('OffPeakSaver', () => {
     expect(fetchMock).not.toHaveBeenCalled()
     const report = saver.getReport('day')
     expect(report.failed_tasks).toBe(1)
+  })
+
+  it('计费按请求发起时刻：高峰发起、空闲返回按原价（P0-1）', async () => {
+    stubFetch()
+    // 注入时钟：请求发起时刻固定为北京 11:00（落在 10:50-11:10 高峰窗口内）
+    const peakStart = new Date('2026-08-18T03:00:00.000Z')
+    const saver = makeSaver({ peak_hours: ['10:50-11:10'] }, { now: () => peakStart })
+    const result = await saver.submitTask({ prompt: '跨边界任务' }, 0)
+    expect(result.task.status).toBe('completed')
+    expect(result.task.savings).toBe(0)
+    expect(result.task.billed_at).toBe('2026-08-18T03:00:00.000Z')
+  })
+
+  it('计费按请求发起时刻：空闲发起享受半价（P0-1 反向）', async () => {
+    stubFetch()
+    const offpeakStart = new Date('2026-08-18T12:30:00.000Z') // 北京 20:30，窗口外
+    const saver = makeSaver({ peak_hours: ['21:00-21:10'] }, { now: () => offpeakStart })
+    const result = await saver.submitTask({ prompt: '半价任务' }, 0)
+    expect(result.task.status).toBe('completed')
+    expect(result.task.savings).toBeCloseTo(5.71, 2)
+    expect(result.task.discount_used).toBe(0.5)
+  })
+
+  it('单层重试：retry_attempts=1 时最多调用 2 次 API（P0-2）', async () => {
+    let calls = 0
+    const fetchMock = vi.fn(async () => {
+      calls++
+      if (calls === 1) {
+        return new Response('{"error":{"message":"rate limited"}}', { status: 429 })
+      }
+      return new Response(JSON.stringify(fakeCompletion()), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const saver = makeSaver({ peak_hours: offPeakHours(), retry_attempts: 1, backoff_base_ms: 5 })
+    const result = await saver.submitTask({ prompt: '重试任务' }, 0)
+    expect(result.task.status).toBe('completed')
+    expect(calls).toBe(2)
+  })
+
+  it('本地写盘失败绝不重试 API（P0-3）', async () => {
+    const fetchMock = stubFetch()
+    const dir = mkdtempSync(path.join(tmpdir(), 'offpeak-local-fail-'))
+    TMP_DIRS.push(dir)
+    const dbDir = path.join(dir, 'db')
+    mkdirSync(dbDir, { recursive: true })
+    writeFileSync(path.join(dbDir, 'results'), '占位文件，阻止目录创建')
+
+    const saver = makeSaver({ db_path: path.join(dbDir, 'offpeak.db'), peak_hours: offPeakHours() })
+    const result = await saver.submitTask({ prompt: '写盘失败任务' }, 0)
+    expect(result.task.status).toBe('failed')
+    expect(String(result.task.error_msg)).toContain('本地持久化错误')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('stop() 中止在途请求并优雅收尾，任务不卡 running（P1-2）', async () => {
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal
+        signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const dbPath = tmpDbPath()
+    let submittedId = ''
+    const saver = makeSaver(
+      { db_path: dbPath, peak_hours: offPeakHours() },
+      {
+        onEvent: (event) => {
+          if (event.type === 'task-submitted') submittedId = event.task.id
+        },
+      },
+    )
+    const pendingSubmit = saver.submitTask({ prompt: '在途请求' }, 0)
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    await saver.stop()
+    await pendingSubmit
+
+    const reopened = makeSaver({ db_path: dbPath, peak_hours: offPeakHours() })
+    const view = reopened.getTask(submittedId)
+    expect(view?.status).toBe('failed')
+    expect(String(view?.error_msg)).toContain('取消')
+  })
+
+  it('安全加固：base_url 不可热更新、pricing 逐项校验、config.json 不能注入 api_key（P0）', async () => {
+    const dbPath = tmpDbPath()
+    writeFileSync(path.join(path.dirname(dbPath), 'config.json'), JSON.stringify({ api_key: 'hacked-key' }))
+    const saver = makeSaver({ db_path: dbPath, api_key: '' })
+    expect(saver.currentConfig.api_key).toBe('')
+    expect(() => saver.updateSetting('base_url', '"https://evil.example"')).toThrow()
+    expect(() =>
+      saver.updateSetting('pricing', '{"deepseek-v4-flash":{"input":"abc","input_cache_hit":0.1,"output":1}}'),
+    ).toThrow()
+    expect(() => saver.updateSetting('peak_hours', '["99:00-99:01"]')).toThrow()
   })
 })

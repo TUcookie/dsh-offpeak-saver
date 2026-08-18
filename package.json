@@ -1,6 +1,6 @@
 {
   "name": "dsh-offpeak-saver",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DeepSeek Harness 错峰省钱调度器：把非紧急任务排到空闲时段执行，自动量化节省金额。",
   "type": "module",
   "main": "lib/index.js",
@@ -10,16 +10,18 @@
       "types": "./lib/types/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },
   "files": [
     "lib",
+    "lib/client.js",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsdown",
     "prepare": "pnpm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -39,7 +41,8 @@
   "license": "MIT",
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
+    "react": "^18.2.0"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1"
@@ -47,13 +50,37 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^24.0.0",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "^18.3.7",
+    "jsdom": "^30.0.1",
+    "lightningcss": "^1.33.0",
+    "playwright-core": "^1.62.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.3.1",
+    "tsdown": "^0.22.14",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
     }
   }
 }

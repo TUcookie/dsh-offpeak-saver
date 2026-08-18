@@ -33,6 +33,20 @@ function readFileUtf8(file: string): string {
   }
 }
 
+/**
+ * 确保工具返回值是 dsh 要求的 lossless JSON：
+ * - 丢弃 undefined 字段（JSON.stringify 行为）；
+ * - NaN / Infinity 归一为 null；
+ * - 顶层不可序列化时直接抛错（避免运行时再报含糊的 "value is not lossless JSON"）。
+ */
+function toLossless<T>(value: T): T {
+  const json = JSON.stringify(value)
+  if (json === undefined) {
+    throw new Error('offpeak-saver: 工具返回值包含不可序列化内容（如顶层 undefined）')
+  }
+  return JSON.parse(json) as T
+}
+
 export function createTools(saver: OffPeakSaver): Array<ReturnType<typeof defineTool>> {
   const currency = (): 'CNY' | 'USD' => saver.currentConfig.currency
 
@@ -98,35 +112,36 @@ export function createTools(saver: OffPeakSaver): Array<ReturnType<typeof define
       const priorityLabel = priority === 0 ? 'realtime' : priority === 1 ? 'offpeak' : 'background'
 
       if (result.immediate !== undefined && task.status === 'completed') {
-        return {
+        const discount = task.savings > 0 ? ' (50% OFF)' : ''
+        return toLossless({
           task_id: task.id,
           status: task.status,
           priority: priorityLabel,
-          message: `✅ 完成 | 💰 节省 ${money(task.savings, currency())} (50% OFF)`,
+          message: `✅ 完成 | 💰 节省 ${money(task.savings, currency())}${discount}`,
           content_preview: result.immediate.content.slice(0, 500),
           cost_actual: task.cost_actual,
           cost_baseline: task.cost_baseline,
           savings: task.savings,
-        }
+        })
       }
 
       if (task.status === 'failed') {
-        return {
+        return toLossless({
           task_id: task.id,
           status: task.status,
           priority: priorityLabel,
           message: `❌ 执行失败：${task.error_msg ?? '未知错误'}`,
-        }
+        })
       }
 
       const next = saver.nextOffPeak()
-      return {
+      return toLossless({
         task_id: task.id,
         status: task.status,
         priority: priorityLabel,
         message: `已加入错峰队列，预计在 ${next?.label ?? '下一空闲时段'} 后开始执行。`,
-        next_offpeak_start: next?.label,
-      }
+        ...(next !== null ? { next_offpeak_start: next.label } : {}),
+      })
     },
     presentCall: (args) => ({
       card: 'generic',
@@ -170,7 +185,7 @@ export function createTools(saver: OffPeakSaver): Array<ReturnType<typeof define
     async execute(args) {
       const view = saver.getTask(args.task_id)
       if (view === null) {
-        return {
+        return toLossless({
           task_id: args.task_id,
           title: '未知任务',
           status: 'not_found',
@@ -178,7 +193,7 @@ export function createTools(saver: OffPeakSaver): Array<ReturnType<typeof define
           created_at: '',
           model: '',
           message: `未找到任务 ${args.task_id}`,
-        }
+        })
       }
       const lines = [
         `📋 ${view.title}（${view.id.slice(0, 8)}…）`,
@@ -205,24 +220,24 @@ export function createTools(saver: OffPeakSaver): Array<ReturnType<typeof define
         }
       }
 
-      return {
+      return toLossless({
         task_id: view.id,
         title: view.title,
         status: view.status,
         priority: view.priority,
         created_at: view.created_at,
-        executed_at: view.executed_at ?? undefined,
-        completed_at: view.completed_at ?? undefined,
+        ...(view.executed_at !== null ? { executed_at: view.executed_at } : {}),
+        ...(view.completed_at !== null ? { completed_at: view.completed_at } : {}),
         model: view.model,
         input_tokens: view.input_tokens,
         output_tokens: view.output_tokens,
         cost_actual: view.cost_actual,
         cost_baseline: view.cost_baseline,
         savings: view.savings,
-        error_msg: view.error_msg ?? undefined,
+        ...(view.error_msg !== null ? { error_msg: view.error_msg } : {}),
         result_excerpt: resultExcerpt,
         message: lines.join('\n'),
-      }
+      })
     },
     presentCall: (args) => ({
       card: 'generic',
@@ -260,7 +275,7 @@ export function createTools(saver: OffPeakSaver): Array<ReturnType<typeof define
     async execute(args) {
       const period = args.period === 'week' || args.period === 'month' ? args.period : 'day'
       const report = saver.getReport(period)
-      return {
+      return toLossless({
         period,
         executions: report.executions,
         completed_tasks: report.completed_tasks,
@@ -271,7 +286,7 @@ export function createTools(saver: OffPeakSaver): Array<ReturnType<typeof define
         savings: report.savings,
         equivalent_free_tokens: report.equivalent_free_tokens,
         text: saver.renderReport(period),
-      }
+      })
     },
     presentCall: (args) => ({
       card: 'generic',
@@ -283,7 +298,7 @@ export function createTools(saver: OffPeakSaver): Array<ReturnType<typeof define
 
   const cancel = defineTool({
     name: 'offpeak_cancel',
-    description: '取消一个还在排队（pending / paused）的错峰任务。',
+    description: '取消错峰任务：pending / paused 直接取消；running 会中止在途 API 请求并尽快收尾。',
     parameters: {
       task_id: { type: 'string', required: true, description: '任务 ID' },
     },
@@ -302,16 +317,23 @@ export function createTools(saver: OffPeakSaver): Array<ReturnType<typeof define
     async execute(args) {
       const task = saver.cancelTask(args.task_id)
       if (task === null) {
-        return { task_id: args.task_id, status: 'not_found', message: `未找到任务 ${args.task_id}` }
+        return toLossless({ task_id: args.task_id, status: 'not_found', message: `未找到任务 ${args.task_id}` })
       }
       if (task.status === 'cancelled') {
-        return { task_id: task.id, status: task.status, message: `已取消任务 ${task.id.slice(0, 8)}` }
+        return toLossless({ task_id: task.id, status: task.status, message: `已取消任务 ${task.id.slice(0, 8)}` })
       }
-      return {
+      if (task.status === 'running') {
+        return toLossless({
+          task_id: task.id,
+          status: task.status,
+          message: `已中止任务 ${task.id.slice(0, 8)} 的在途请求，稍后将收尾（结果为 failed/cancelled）`,
+        })
+      }
+      return toLossless({
         task_id: task.id,
         status: task.status,
         message: `任务当前状态为 ${task.status}，无法取消（仅 pending / paused 可取消）`,
-      }
+      })
     },
   })
 
@@ -319,7 +341,7 @@ export function createTools(saver: OffPeakSaver): Array<ReturnType<typeof define
     name: 'offpeak_settings',
     description:
       '查看或热更新错峰调度器配置。可更新：peak_hours、discount_rate、max_concurrency、retry_attempts、'
-      + 'stop_before_peak_minutes、currency、pricing、default_model 等。',
+      + 'stop_before_peak_minutes、currency、pricing、default_model 等。API Key 永不返回明文（已脱敏）。',
     parameters: {
       action: { type: 'string', required: true, description: 'get 或 set' },
       key: { type: 'string', description: '要读取/更新的配置键' },
@@ -339,23 +361,23 @@ export function createTools(saver: OffPeakSaver): Array<ReturnType<typeof define
     async execute(args) {
       if (args.action === 'set') {
         if (args.key === undefined || args.value === undefined) {
-          return { message: 'set 操作需要同时提供 key 和 value' }
+          return toLossless({ message: 'set 操作需要同时提供 key 和 value' })
         }
         try {
           const { key, value } = saver.updateSetting(args.key, args.value)
-          return {
+          return toLossless({
             message: `✅ 配置已热更新：${key} = ${JSON.stringify(value)}（重启后依然生效）`,
             settings: JSON.stringify(saver.getSettings().config, null, 2),
-          }
+          })
         } catch (error) {
-          return { message: `❌ 更新失败：${error instanceof Error ? error.message : String(error)}` }
+          return toLossless({ message: `❌ 更新失败：${error instanceof Error ? error.message : String(error)}` })
         }
       }
       const settings = saver.getSettings()
-      return {
+      return toLossless({
         message: `当前配置：\n\`\`\`json\n${JSON.stringify(settings.config, null, 2)}\n\`\`\``,
         settings: JSON.stringify(settings.config, null, 2),
-      }
+      })
     },
   })
 

@@ -23,8 +23,15 @@ export function parsePeakHours(peakHours: string[]): PeakWindow[] {
     if (match === null) {
       throw new Error(`offpeak-saver: 无法解析高峰时段 "${raw}"，正确格式为 "HH:MM-HH:MM"`)
     }
-    const startMin = toMinutes(Number(match[1]), Number(match[2]))
-    const endMin = toMinutes(Number(match[3]), Number(match[4]))
+    const startH = Number(match[1])
+    const startM = Number(match[2])
+    const endH = Number(match[3])
+    const endM = Number(match[4])
+    if (startH > 23 || startM > 59 || endH > 23 || endM > 59) {
+      throw new Error(`offpeak-saver: 高峰时段 "${raw}" 超出合法范围（小时 0-23、分钟 0-59）`)
+    }
+    const startMin = toMinutes(startH, startM)
+    const endMin = toMinutes(endH, endM)
     if (startMin === endMin) {
       throw new Error(`offpeak-saver: 高峰时段 "${raw}" 起止时间相同`)
     }
@@ -106,11 +113,11 @@ export function nextOffPeakStart(date: Date, windows: PeakWindow[], tzOffsetHour
   if (isOffPeak(date, windows, tzOffsetHours)) return null
   const nowUtcMs = date.getTime()
   const tzMs = tzOffsetHours * 3_600_000
-  const minutes = minutesOf(date, tzOffsetHours)
 
   let best: NextStart | null = null
   for (const window of windows) {
-    for (const offsetDays of [0]) {
+    // 补查次日：跨零点窗口（如 22:00-02:00）在凌晨查询时结束点在次日
+    for (const offsetDays of [0, 1]) {
       const dayStartUtc = Math.floor((nowUtcMs + tzMs) / 86_400_000) + offsetDays
       const endUtcMs = dayStartUtc * 86_400_000 + window.endMin * 60_000 - tzMs
       const delta = endUtcMs - nowUtcMs
@@ -118,7 +125,7 @@ export function nextOffPeakStart(date: Date, windows: PeakWindow[], tzOffsetHour
       if (best === null || delta < best.minutes * 60_000) {
         best = {
           minutes: Math.ceil(delta / 60_000),
-          label: `今日 ${formatClock(window.endMin)}`,
+          label: `${offsetDays === 0 ? '今日' : '明日'} ${formatClock(window.endMin)}`,
           at: new Date(endUtcMs),
         }
       }

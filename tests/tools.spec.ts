@@ -8,9 +8,9 @@ import { createTools } from '../src/tools.js'
 const TMP_DIRS: string[] = []
 const SAVERS: OffPeakSaver[] = []
 
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllGlobals()
-  for (const saver of SAVERS.splice(0)) saver.stop()
+  for (const saver of SAVERS.splice(0)) await saver.stop()
   while (TMP_DIRS.length > 0) {
     removeDirWithRetry(TMP_DIRS.pop()!)
   }
@@ -44,6 +44,7 @@ function makeSaver(): { saver: OffPeakSaver; tools: Array<ReturnType<typeof crea
     api_key: 'sk-test',
     db_path: path.join(dir, 'offpeak.db'),
     peak_hours: ['00:00-00:01'],
+    stop_before_peak_minutes: 0,
   })
   SAVERS.push(saver)
   return { saver, tools: createTools(saver) }
@@ -56,6 +57,16 @@ function tool(tools: Array<ReturnType<typeof createTools>[number]>, name: string
 }
 
 const exec = { signal: new AbortController().signal }
+
+/**
+ * 模拟 dsh 的 lossless JSON 检查：JSON 往返后必须与原值严格相等，
+ * 任何 undefined 字段 / NaN 都会让往返结果不一致。
+ */
+function assertLosslessJson(value: unknown): void {
+  const json = JSON.stringify(value)
+  expect(json).toBeDefined()
+  expect(JSON.parse(json!)).toEqual(value)
+}
 
 describe('dsh 工具', () => {
   it('注册 5 个工具且参数声明完整', () => {
@@ -82,7 +93,8 @@ describe('dsh 工具', () => {
     expect(result.status).toBe('pending')
     expect(String(result.message)).toContain('已加入错峰队列')
     expect(saver.countPending()).toBe(1)
-    saver.stop()
+    // 回归：空闲时段提交（nextOffPeak 为 null）时返回值必须 lossless（曾返回 undefined 导致 dsh 报错）
+    assertLosslessJson(result)
   })
 
   it('offpeak_submit：realtime 立即执行并报告节省金额', async () => {
@@ -94,6 +106,7 @@ describe('dsh 工具', () => {
     expect(result.status).toBe('completed')
     expect(String(result.message)).toContain('✅ 完成')
     expect(String(result.message)).toContain('节省 ¥')
+    assertLosslessJson(result)
   })
 
   it('offpeak_status 查询任务状态与结果预览', async () => {
@@ -105,7 +118,7 @@ describe('dsh 工具', () => {
     const status = await tool(tools, 'offpeak_status').execute({ task_id: String(queued.task_id) }, exec)
     expect(status.status).toBe('pending')
     expect(String(status.message)).toContain('状态：pending')
-    saver.stop()
+    assertLosslessJson(status)
   })
 
   it('offpeak_report 返回账单文本', async () => {
@@ -113,6 +126,7 @@ describe('dsh 工具', () => {
     const result = await tool(tools, 'offpeak_report').execute({}, exec)
     expect(result.period).toBe('day')
     expect(String(result.text)).toContain('错峰省钱账单')
+    assertLosslessJson(result)
   })
 
   it('offpeak_cancel 取消排队任务', async () => {
@@ -121,7 +135,7 @@ describe('dsh 工具', () => {
     const result = await tool(tools, 'offpeak_cancel').execute({ task_id: String(queued.task_id) }, exec)
     expect(result.status).toBe('cancelled')
     expect(saver.countPending()).toBe(0)
-    saver.stop()
+    assertLosslessJson(result)
   })
 
   it('offpeak_settings 支持 get 与热更新 set', async () => {
@@ -135,6 +149,61 @@ describe('dsh 工具', () => {
     )
     expect(String(set.message)).toContain('已热更新')
     expect(saver.currentConfig.max_concurrency).toBe(3)
-    saver.stop()
+  })
+
+  it('offpeak_settings 输出不含明文 API Key（P0 安全）', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'offpeak-mask-'))
+    TMP_DIRS.push(dir)
+    const saver = new OffPeakSaver({
+      api_key: 'sk-super-secret-123456',
+      db_path: path.join(dir, 'offpeak.db'),
+      peak_hours: ['00:00-00:01'],
+    })
+    SAVERS.push(saver)
+    const tools = createTools(saver)
+    const got = await tool(tools, 'offpeak_settings').execute({ action: 'get' }, exec)
+    const raw = String(got.settings)
+    expect(raw).not.toContain('sk-super-secret')
+    expect(raw).toContain('****3456')
+    expect(saver.getSettings().config.api_key).toBe('****3456')
+    assertLosslessJson(got)
+  })
+
+  it('offpeak_cancel 支持中止 running 任务（在途请求）', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'offpeak-cancel-running-'))
+    TMP_DIRS.push(dir)
+    vi.stubGlobal('fetch', vi.fn((_url: string, init?: RequestInit) => {
+      // 挂起请求直到被 abort
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal
+        signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+      })
+    }))
+
+    const saver = new OffPeakSaver({
+      api_key: 'sk-test',
+      db_path: path.join(dir, 'offpeak.db'),
+      peak_hours: ['00:00-00:01'],
+      stop_before_peak_minutes: 0,
+    })
+    SAVERS.push(saver)
+    const tools = createTools(saver)
+
+    const submit = tool(tools, 'offpeak_submit')
+    const submitPromise = submit.execute({ prompt: '慢任务', priority: 'realtime' }, exec)
+    await vi.waitFor(() => {
+      expect(saver.listTasks().running.length).toBe(1)
+    })
+    const runningId = saver.listTasks().running[0]!.id
+
+    const cancelResult = await tool(tools, 'offpeak_cancel').execute({ task_id: runningId }, exec)
+    expect(String(cancelResult.message)).toContain('已中止')
+    assertLosslessJson(cancelResult)
+
+    await submitPromise
+    await vi.waitFor(() => {
+      expect(saver.getTask(runningId)?.status).toBe('failed')
+    })
+    expect(String(saver.getTask(runningId)?.error_msg)).toContain('取消')
   })
 })

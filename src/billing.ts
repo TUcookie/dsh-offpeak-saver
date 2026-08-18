@@ -34,15 +34,16 @@ export function computeCosts(
     1_000_000
   const actualUnrounded = baseline * discountRate
   return {
-    cost_actual: round4(actualUnrounded),
-    cost_baseline: round4(baseline),
-    savings: round4(baseline - actualUnrounded),
+    cost_actual: round6(actualUnrounded),
+    cost_baseline: round6(baseline),
+    savings: round6(baseline - actualUnrounded),
     price_snapshot: pricing,
   }
 }
 
-export function round4(value: number): number {
-  return Math.round((value + Number.EPSILON) * 10_000) / 10_000
+/** 入库精度：6 位小数（展示时再 toFixed(2)），避免万笔任务累计误差。 */
+export function round6(value: number): number {
+  return Math.round((value + Number.EPSILON) * 1_000_000) / 1_000_000
 }
 
 /** 金额展示：¥1.23 / $1.23。 */

@@ -60,7 +60,7 @@ describe('打包后的 client bundle（DSH ModuleLoader 协议）', () => {
           return () => {}
         },
         inject: (name: string, factory: () => unknown) => {
-          if (name === 'settings.section') factory()
+          factory()
         },
       },
       locale: {
@@ -72,9 +72,10 @@ describe('打包后的 client bundle（DSH ModuleLoader 协议）', () => {
       },
     })
 
-    expect(registrations).toHaveLength(1)
-    expect(registrations[0]?.id).toBe('offpeak-saver-panel')
-    expect(registrations[0]?.name).toBe('settings.section')
+    const byId = new Map(registrations.map((registration) => [registration.id, registration]))
+    expect(byId.get('offpeak-saver-panel')?.name).toBe('settings.section')
+    expect(byId.get('offpeak-saver-entry')?.name).toBe('sidebar.footer.action')
+    expect(byId.get('offpeak-saver-overlay')?.name).toBe('shell.overlay')
     expect(locales[0]?.zh.nav).toBe('错峰省钱')
     expect(locales[0]?.en.nav).toBe('Off-Peak Saver')
   })

@@ -7,8 +7,9 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { OffpeakPanel } from './OffpeakPanel.tsx'
 import { en, NS, zh } from './locales.ts'
+import { OffpeakOverlay, SidebarEntry } from './sidebar-entry.tsx'
 
-export { OffpeakPanel }
+export { OffpeakPanel, OffpeakOverlay, SidebarEntry }
 export { NS, en, zh } from './locales.ts'
 
 /** Required browser services. */
@@ -26,4 +27,19 @@ export function apply(ctx: ClientContext): void {
     locale: NS,
     inject: () => ({}),
   }, OffpeakPanel))
+
+  // 侧边栏常驻入口：底部按钮
+  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
+    name: 'sidebar.footer.action',
+    id: 'offpeak-saver-entry',
+    order: 20,
+    locale: NS,
+  }, SidebarEntry))
+
+  // 浮层宿主：按钮打开的面板
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay',
+    id: 'offpeak-saver-overlay',
+    locale: NS,
+  }, OffpeakOverlay))
 }

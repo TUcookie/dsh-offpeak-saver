@@ -22,6 +22,14 @@ interface PanelOverview {
   }
 }
 
+function priorityFromString(raw: string | undefined): number {
+  switch (raw) {
+    case 'realtime': return 0
+    case 'background': return 2
+    default: return 1
+  }
+}
+
 function send(res: ServerResponse, status: number, body: unknown): void {
   const json = JSON.stringify(body)
   res.statusCode = status
@@ -135,6 +143,42 @@ export function registerPanelHttp(ctx: Context, saver: OffPeakSaver, server: Web
           return
         }
         send(res, 200, { ok: true, value: { id, status: task.status } })
+        return
+      }
+
+      if (method === 'POST' && route === '/offpeak-saver/submit') {
+        const body = await readJson(req)
+        const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
+        if (prompt === '') {
+          send(res, 400, { ok: false, error: 'prompt 不能为空' })
+          return
+        }
+        const priority = priorityFromString(typeof body.priority === 'string' ? body.priority : undefined)
+        const result = await saver.submitTask(
+          {
+            prompt,
+            title: typeof body.title === 'string' ? body.title : undefined,
+            model: typeof body.model === 'string' ? body.model : undefined,
+            output_path: typeof body.outputPath === 'string' ? body.outputPath : undefined,
+            params: {
+              temperature: typeof body.temperature === 'number' ? body.temperature : undefined,
+              max_tokens: typeof body.maxTokens === 'number' ? body.maxTokens : undefined,
+            },
+          },
+          priority as 0 | 1 | 2,
+        )
+        const task = result.task
+        send(res, 200, {
+          ok: true,
+          value: {
+            task_id: task.id,
+            status: task.status,
+            priority,
+            message: priority === 0
+              ? `✅ 完成 | 实际花费 ¥${task.cost_actual.toFixed(4)} | 节省 ¥${task.savings.toFixed(4)}`
+              : `已加入错峰队列（${task.id.slice(0, 8)}…），${saver.nextOffPeak()?.label ?? '下一空闲时段'}开始执行`,
+          },
+        })
         return
       }
 

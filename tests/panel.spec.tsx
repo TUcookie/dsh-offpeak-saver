@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { OffpeakPanel } from '../src/client/OffpeakPanel.tsx'
 import { zh } from '../src/client/locales.ts'
 import type { PanelOverview } from '../src/client/api.ts'
@@ -207,5 +207,46 @@ describe('OffpeakPanel 渲染', () => {
 
     FakeEventSource.instances.at(-1)?.emit({ type: 'task-completed' })
     await waitFor(() => expect(fetches).toBeGreaterThanOrEqual(2))
+  })
+
+  it('提交表单：填写 prompt 选择错峰后调用 /submit 并刷新', async () => {
+    stubEventSource()
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      calls.push(url)
+      if (url.includes('/submit')) {
+        return new Response(JSON.stringify({
+          ok: true,
+          value: { task_id: 'new-task', status: 'pending', priority: 1, message: '已加入错峰队列' },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ ok: true, value: fakeOverview() }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    render(<OffpeakPanel t={(key) => zh[key]} />)
+    await waitFor(() => {
+      expect(screen.getByText('提交任务')).toBeTruthy()
+    })
+
+    const textarea = screen.getByPlaceholderText(/例如：#offpeak/)
+    const button = screen.getByText('加入队列')
+    fireEvent.change(textarea, { target: { value: '#offpeak 写一百篇摘要' } })
+    fireEvent.click(button)
+
+    await waitFor(() => {
+      expect(calls.some((url) => url.includes('/submit'))).toBe(true)
+    })
+    const submitCall = calls.find((url) => url.includes('/submit'))
+    expect(submitCall).toBeDefined()
+    await waitFor(() => {
+      expect(screen.getByText(/已提交/)).toBeTruthy()
+    })
   })
 })

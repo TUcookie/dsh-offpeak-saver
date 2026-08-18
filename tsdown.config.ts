@@ -33,6 +33,8 @@ const host: UserConfig = {
   clean: false,
   sourcemap: false,
   fixedExtension: false,
+  // host 拆 chunk 会产生与 browser bundle 撞名的 lib/client.js，必须单文件输出
+  codeSplitting: false,
   external: [/^@deepseek-ai\//, /^node:/],
   outputOptions: {
     entryFileNames: 'index.js',

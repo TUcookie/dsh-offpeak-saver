@@ -286,4 +286,21 @@ describe('OffPeakSaver', () => {
     ).toThrow()
     expect(() => saver.updateSetting('peak_hours', '["99:00-99:01"]')).toThrow()
   })
+
+  it('空 prompt 拒绝提交；标题自动生成（#offpeak 剔除标签、超长截断）', async () => {
+    const saver = makeSaver({ peak_hours: peakHours() })
+    await expect(saver.submitTask({ prompt: '   ' }, 1)).rejects.toThrow('不能为空')
+
+    const tagged = await saver.submitTask({ prompt: '#offpeak 给文档写摘要' }, 1)
+    const view = saver.getTask(tagged.task.id)
+    expect(view?.title).toBe('给文档写摘要')
+
+    const long = await saver.submitTask(
+      { prompt: '这是一段非常非常非常非常非常非常非常非常非常非常非常非常长的任务描述，用来测试自动标题的截断行为' },
+      1,
+    )
+    const longView = saver.getTask(long.task.id)
+    expect(longView?.title).toHaveLength(31)
+    expect(longView?.title.endsWith('…')).toBe(true)
+  })
 })

@@ -166,11 +166,18 @@ export class OffPeakSaver {
 
   /** 提交任务。priority 0 = 立即执行，1 = 错峰，2 = 后台错峰。 */
   async submitTask(input: SubmitInput, priority: Priority): Promise<SubmitResult> {
+    const prompt = input.prompt.trim()
+    if (prompt === '') {
+      throw new Error('offpeak-saver: 任务 prompt 不能为空')
+    }
     const task = this.store.createTask({
       id: randomUUID(),
       payload: {
-        prompt: input.prompt,
-        title: input.title,
+        prompt,
+        title: (() => {
+          const raw = input.title?.trim()
+          return raw !== undefined && raw !== '' ? raw : autoTitle(prompt)
+        })(),
         model: input.model,
         session_id: input.session_id,
         output_path: input.output_path,
@@ -350,6 +357,13 @@ export class OffPeakSaver {
     if (task === null) throw new Error(`offpeak-saver: 任务 ${id} 不存在`)
     return task
   }
+}
+
+/** 自动标题：取 prompt 前 30 个字符（含 #offpeak 时先剔除标签）。 */
+function autoTitle(prompt: string): string {
+  const cleaned = prompt.replace(/#\s*(offpeak|batch|realtime)\b/gi, '').trim()
+  const source = cleaned === '' ? prompt : cleaned
+  return source.length <= 30 ? source : `${source.slice(0, 30)}…`
 }
 
 function parsePayload(raw: string): TaskPayload {

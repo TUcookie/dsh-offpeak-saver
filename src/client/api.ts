@@ -86,6 +86,25 @@ export function cancelTask(taskId: string): Promise<{ id: string; status: string
   })
 }
 
+export interface SubmitPanelInput {
+  prompt: string
+  title?: string
+  priority: 'realtime' | 'offpeak' | 'background'
+  model?: string
+}
+
+export function submitTask(input: SubmitPanelInput): Promise<{
+  task_id: string
+  status: string
+  priority: number
+  message: string
+}> {
+  return request('/offpeak-saver/submit', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
 export function money(amount: number, currency: 'CNY' | 'USD'): string {
   const symbol = currency === 'CNY' ? '¥' : '$'
   // 不足 1 分钱的金额显示 4 位小数，避免“省了钱但显示 ¥0.00”

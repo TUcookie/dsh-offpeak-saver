@@ -6,6 +6,7 @@ import {
   formatClock,
   loadOverview,
   money,
+  submitTask,
   type PanelOverview,
   type PanelTask,
 } from './api.ts'
@@ -187,6 +188,95 @@ function RecentTable({ tasks, t }: { tasks: PanelTask[]; t: (key: keyof typeof z
   )
 }
 
+function SubmitForm({ t, onSubmitted }: {
+  t: (key: keyof typeof zh) => string
+  onSubmitted: () => Promise<void>
+}): React.ReactNode {
+  const [prompt, setPrompt] = useState('')
+  const [title, setTitle] = useState('')
+  const [priority, setPriority] = useState<'realtime' | 'offpeak' | 'background'>('offpeak')
+  const [submitting, setSubmitting] = useState(false)
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const [feedbackKind, setFeedbackKind] = useState<'ok' | 'error'>('ok')
+
+  const doSubmit = async (): Promise<void> => {
+    if (prompt.trim() === '') {
+      setFeedback(t('submitEmpty'))
+      setFeedbackKind('error')
+      return
+    }
+    setSubmitting(true)
+    setFeedback(null)
+    try {
+      const result = await submitTask({ prompt: prompt.trim(), title: title.trim() || undefined, priority })
+      setFeedback(`${t('submitSuccess')}：${result.message}`)
+      setFeedbackKind('ok')
+      setPrompt('')
+      setTitle('')
+      await onSubmitted()
+    } catch (error) {
+      setFeedback(`${t('submitError')}：${error instanceof Error ? error.message : String(error)}`)
+      setFeedbackKind('error')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className={`${css.section} ${css.submitSection}`}>
+      <div className={css.sectionHead}>
+        <h3 className={css.sectionTitle}>{t('submitTitle')}</h3>
+      </div>
+      <div className={css.submitBody}>
+        <label className={css.field}>
+          <span className={css.fieldLabel}>{t('submitPrompt')}</span>
+          <textarea
+            className={css.textarea}
+            value={prompt}
+            placeholder={t('submitPromptPlaceholder')}
+            rows={3}
+            onChange={(event) => { setPrompt(event.target.value) }}
+          />
+        </label>
+        <div className={css.submitRow}>
+          <label className={css.field}>
+            <span className={css.fieldLabel}>{t('submitTitleLabel')}</span>
+            <input
+              className={css.input}
+              value={title}
+              onChange={(event) => { setTitle(event.target.value) }}
+            />
+          </label>
+          <label className={css.field}>
+            <span className={css.fieldLabel}>{t('submitPriority')}</span>
+            <select
+              className={css.input}
+              value={priority}
+              onChange={(event) => { setPriority(event.target.value as typeof priority) }}
+            >
+              <option value="offpeak">{t('submitPriorityOffpeak')}</option>
+              <option value="realtime">{t('submitPriorityRealtime')}</option>
+              <option value="background">{t('submitPriorityBackground')}</option>
+            </select>
+          </label>
+          <button
+            className={css.button}
+            disabled={submitting}
+            onClick={() => { void doSubmit() }}
+          >
+            {submitting ? t('submitting') : t('submitButton')}
+          </button>
+        </div>
+        {feedback !== null && (
+          <p className={feedbackKind === 'ok' ? css.feedbackOk : css.feedbackError} role="status">
+            {feedback}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
   const [state, setState] = useState<PanelOverview | null>(null)
   const [loading, setLoading] = useState(true)
@@ -284,6 +374,8 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
       </div>
 
       {error !== null && <div className={css.error} role="alert">{error}</div>}
+
+      <SubmitForm t={t} onSubmitted={load} />
 
       <div className={css.cards}>
         <div className={css.card}>

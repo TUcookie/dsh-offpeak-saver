@@ -63,23 +63,27 @@ export function buildReport(
   const fromIso = from.toISOString()
   const billing = store.billingSince(fromIso)
   const counts = store.taskCountsSince(fromIso)
+  // 只有真正错峰排队的任务（priority 1/2）才算“错峰执行/节省”；
+  // 用户主动 realtime（priority 0）执行的任务不计入省钱统计。
+  const offpeakBilling = store.billingSinceOffpeak(fromIso)
+  const offpeakCounts = store.taskCountsSinceOffpeak(fromIso)
   const pricing = config.pricing[config.default_model] ?? { input: 3.0, input_cache_hit: 0.1, output: 9.0 }
 
   return {
     period,
     period_label: periodLabel(period, now, config.timezone_offset_hours),
     from: fromIso,
-    executions: billing.executions,
-    completed_tasks: counts.completed,
-    failed_tasks: counts.failed,
+    executions: offpeakBilling.executions,
+    completed_tasks: offpeakCounts.completed,
+    failed_tasks: offpeakCounts.failed,
     pending_tasks: store.countPending(),
-    input_tokens: billing.input_tokens,
-    output_tokens: billing.output_tokens,
-    cache_hit_tokens: billing.cache_hit_tokens,
-    cost_actual: round6(billing.cost_actual),
-    cost_baseline: round6(billing.cost_baseline),
-    savings: round6(billing.savings),
-    equivalent_free_tokens: equivalentFreeTokens(billing.savings, pricing, config.discount_rate),
+    input_tokens: offpeakBilling.input_tokens,
+    output_tokens: offpeakBilling.output_tokens,
+    cache_hit_tokens: offpeakBilling.cache_hit_tokens,
+    cost_actual: round6(offpeakBilling.cost_actual),
+    cost_baseline: round6(offpeakBilling.cost_baseline),
+    savings: round6(offpeakBilling.savings),
+    equivalent_free_tokens: equivalentFreeTokens(offpeakBilling.savings, pricing, config.discount_rate),
     currency: config.currency,
   }
 }

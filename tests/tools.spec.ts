@@ -104,8 +104,7 @@ describe('dsh 工具', () => {
       exec,
     )
     expect(result.status).toBe('completed')
-    expect(String(result.message)).toContain('✅ 完成')
-    expect(String(result.message)).toContain('节省 ¥')
+    expect(String(result.message)).toContain('任务已完成')
     assertLosslessJson(result)
   })
 

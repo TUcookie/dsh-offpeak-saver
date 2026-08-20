@@ -38,6 +38,8 @@ export type Priority = 0 | 1 | 2
 
 export interface SubmitInput {
   prompt: string
+  /** 任务执行时的工作目录（独立会话的 cwd，避免 {{cwd}} 无值）。 */
+  cwd?: string
   title?: string
   model?: string
   session_id?: string
@@ -170,27 +172,7 @@ export class OffPeakSaver {
 
   /** 提交任务。priority 0 = 立即执行，1 = 错峰，2 = 后台错峰。 */
   async submitTask(input: SubmitInput, priority: Priority): Promise<SubmitResult> {
-    const prompt = input.prompt.trim()
-    if (prompt === '') {
-      throw new Error('offpeak-saver: 任务 prompt 不能为空')
-    }
-    const task = this.store.createTask({
-      id: randomUUID(),
-      payload: {
-        prompt,
-        title: (() => {
-          const raw = input.title?.trim()
-          return raw !== undefined && raw !== '' ? raw : autoTitle(prompt)
-        })(),
-        model: input.model,
-        session_id: input.session_id,
-        output_path: input.output_path,
-        params: input.params,
-      },
-      priority,
-      created_at: new Date().toISOString(),
-    })
-    this.emit({ type: 'task-submitted', task })
+    const task = this.createQueuedTask(input, priority)
 
     if (priority === 0) {
       await this.executor.runTask(task.id)
@@ -209,6 +191,54 @@ export class OffPeakSaver {
       return { task: final }
     }
     return { task }
+  }
+
+  /** 只入队、不执行（供自动分流：先拿到任务 ID 再决定立即执行或排队）。 */
+  createQueuedTask(input: SubmitInput, priority: Priority): TaskRow {
+    const prompt = input.prompt.trim()
+    if (prompt === '') {
+      throw new Error('offpeak-saver: 任务 prompt 不能为空')
+    }
+    const task = this.store.createTask({
+      id: randomUUID(),
+      payload: {
+        prompt,
+        cwd: input.cwd,
+        title: (() => {
+          const raw = input.title?.trim()
+          return raw !== undefined && raw !== '' ? raw : autoTitle(prompt)
+        })(),
+        model: input.model,
+        session_id: input.session_id,
+        output_path: input.output_path,
+        params: input.params,
+      },
+      priority,
+      created_at: new Date().toISOString(),
+    })
+    this.emit({ type: 'task-submitted', task })
+    return task
+  }
+
+  /** 把已入队（pending/paused）的任务提级为实时并立即执行。 */
+  async runTaskNow(id: string): Promise<TaskRow | null> {
+    const task = this.store.getTask(id)
+    if (task === null || (task.status !== 'pending' && task.status !== 'paused')) return task
+    this.store.requeueTask(id)
+    this.store.setPriority(id, 0)
+    await this.executor.runTask(id)
+    return this.requireTask(id)
+  }
+
+  /**
+   * 错峰时段：任务直接复用当前会话执行（auto-route 已放行消息）。
+   * 这里把任务标记为“本地已认领”，避免调度器再把它当 pending 重复执行；
+   * 完成后的 token 用量由当前会话回填（见回填接口）。
+   */
+  markTaskStartedLocally(id: string): void {
+    const task = this.store.getTask(id)
+    if (task === null || task.status !== 'pending') return
+    this.store.markRunning(id, new Date().toISOString())
   }
 
   getTask(id: string): TaskView | null {

@@ -17,6 +17,7 @@ import { registerPanelHttpWhenReady } from './http.js'
 import { createDshSessionRunner } from './session-runner.js'
 import { createTools } from './tools.js'
 import { satisfiesCaret } from './version.js'
+import { installAutoRouting } from './auto-route.js'
 
 export const name = 'dsh-offpeak-saver'
 
@@ -127,11 +128,13 @@ export function apply(ctx: Context, config: Config): void {
   ctx.effect(() => {
     const disposers = createTools(saver).map((tool) => ctx.tools.register(tool))
     const disposeHttp = registerPanelHttpWhenReady(ctx, saver)
+    const disposeAutoRouting = installAutoRouting(ctx, saver)
     saver.start()
     return async () => {
       for (const dispose of disposers) {
         if (typeof dispose === 'function') dispose()
       }
+      disposeAutoRouting()
       disposeHttp()
       await saver.stop()
     }

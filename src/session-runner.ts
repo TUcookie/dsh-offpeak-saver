@@ -53,6 +53,7 @@ export interface SessionRunner {
 interface AgentsService {
   create(options: {
     sessionId: string
+    meta?: { cwd?: string }
     agentOptions?: { model?: string; maxTokens?: number }
     signal?: AbortSignal
   }): Promise<AgentHandle>
@@ -148,6 +149,7 @@ export function createDshSessionRunner(ctx: unknown): SessionRunner {
         const newId = `offpeak-${startedEvents.toString(36)}-${Math.random().toString(36).slice(2, 8)}`
         handle = await agents.create({
           sessionId: newId,
+          meta: { cwd: payload.cwd ?? process.cwd() },
           agentOptions: options,
           signal,
         })

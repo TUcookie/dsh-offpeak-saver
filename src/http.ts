@@ -175,8 +175,8 @@ export function registerPanelHttp(ctx: Context, saver: OffPeakSaver, server: Web
             status: task.status,
             priority,
             message: priority === 0
-              ? `✅ 完成 | 实际花费 ¥${task.cost_actual.toFixed(4)} | 节省 ¥${task.savings.toFixed(4)}`
-              : `已加入错峰队列（${task.id.slice(0, 8)}…），${saver.nextOffPeak()?.label ?? '下一空闲时段'}开始执行`,
+              ? '已开始执行'
+              : `已加入错峰队列，${saver.nextOffPeak()?.label ?? '下一空闲时段'}开始执行`,
           },
         })
         return

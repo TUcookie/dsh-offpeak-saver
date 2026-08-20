@@ -13,6 +13,8 @@ export type TaskStatus = 'pending' | 'running' | 'paused' | 'completed' | 'faile
 
 export interface TaskPayload {
   prompt: string
+  /** 任务执行时的工作目录（独立会话 cwd）。 */
+  cwd?: string
   model?: string
   params?: {
     temperature?: number
@@ -161,11 +163,15 @@ export class TaskStore {
   private readonly updateCompletedStmt: StatementSync
   private readonly markFailedStmt: StatementSync
   private readonly cancelStmt: StatementSync
+  private readonly setPriorityStmt: StatementSync
+  private readonly requeueTaskStmt: StatementSync
   private readonly retryStmt: StatementSync
   private readonly countPendingStmt: StatementSync
   private readonly countStaleStmt: StatementSync
   private readonly insertBillingStmt: StatementSync
   private readonly billingSinceStmt: StatementSync
+  private readonly billingSinceOffpeakStmt: StatementSync
+  private readonly taskCountsSinceOffpeakStmt: StatementSync
   private readonly taskCountsStmt: StatementSync
   private readonly setConfigStmt: StatementSync
   private readonly getConfigStmt: StatementSync
@@ -228,6 +234,10 @@ export class TaskStore {
     this.cancelStmt = db.prepare(
       `UPDATE tasks SET status = 'cancelled', error_msg = 'cancelled by user' WHERE id = @id`,
     )
+    this.setPriorityStmt = db.prepare('UPDATE tasks SET priority = @priority WHERE id = @id')
+    this.requeueTaskStmt = db.prepare(
+      `UPDATE tasks SET status = 'pending', error_msg = NULL WHERE id = @id AND status IN ('pending', 'paused')`,
+    )
     this.retryStmt = db.prepare(
       `UPDATE tasks SET status = 'pending', error_msg = NULL, retry_count = 0, executed_at = NULL,
          completed_at = NULL, claimed_at = NULL
@@ -256,11 +266,30 @@ export class TaskStore {
          COALESCE(SUM(savings), 0) AS savings
        FROM billing_logs WHERE created_at >= @fromIso`,
     )
+    this.billingSinceOffpeakStmt = db.prepare(
+      `SELECT
+         COUNT(*) AS executions,
+         COALESCE(SUM(l.input_tokens), 0) AS input_tokens,
+         COALESCE(SUM(l.output_tokens), 0) AS output_tokens,
+         COALESCE(SUM(l.cache_hit_tokens), 0) AS cache_hit_tokens,
+         COALESCE(SUM(l.cost_actual), 0) AS cost_actual,
+         COALESCE(SUM(l.cost_baseline), 0) AS cost_baseline,
+         COALESCE(SUM(l.savings), 0) AS savings
+       FROM billing_logs l
+       JOIN tasks t ON t.id = l.task_id
+       WHERE l.created_at >= @fromIso AND t.priority IN (1, 2)`,
+    )
     this.taskCountsStmt = db.prepare(
       `SELECT
          COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0) AS completed,
          COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
        FROM tasks WHERE completed_at >= @fromIso`,
+    )
+    this.taskCountsSinceOffpeakStmt = db.prepare(
+      `SELECT
+         COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0) AS completed,
+         COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
+       FROM tasks WHERE completed_at >= @fromIso AND priority IN (1, 2)`,
     )
     this.setConfigStmt = db.prepare(
       `INSERT INTO config (key, value) VALUES (@key, @value)
@@ -387,6 +416,18 @@ export class TaskStore {
     return task
   }
 
+  /** 把任务提级为实时（priority 0），供“立即执行”场景使用。 */
+  setPriority(id: string, priority: number): boolean {
+    const result = this.setPriorityStmt.run({ '@id': id, '@priority': priority })
+    return (result.changes as number) === 1
+  }
+
+  /** 把 paused/pending 任务重新放回待执行（供单任务立即执行前调用）。 */
+  requeueTask(id: string): boolean {
+    const result = this.requeueTaskStmt.run({ '@id': id })
+    return (result.changes as number) === 1
+  }
+
   retry(id: string): TaskRow | null {
     const task = this.getTask(id)
     if (task === null || task.status !== 'failed') return null
@@ -446,8 +487,35 @@ export class TaskStore {
     return result
   }
 
+  /** 只统计真正错峰（priority 1/2）任务的账单。 */
+  billingSinceOffpeak(fromIso: string): {
+    executions: number
+    input_tokens: number
+    output_tokens: number
+    cache_hit_tokens: number
+    cost_actual: number
+    cost_baseline: number
+    savings: number
+  } {
+    const result = this.billingSinceOffpeakStmt.get({ '@fromIso': fromIso }) as {
+      executions: number
+      input_tokens: number
+      output_tokens: number
+      cache_hit_tokens: number
+      cost_actual: number
+      cost_baseline: number
+      savings: number
+    }
+    return result
+  }
+
   taskCountsSince(fromIso: string): { completed: number; failed: number } {
     return this.taskCountsStmt.get({ '@fromIso': fromIso }) as { completed: number; failed: number }
+  }
+
+  /** 只统计真正错峰（priority 1/2）任务的成功/失败数。 */
+  taskCountsSinceOffpeak(fromIso: string): { completed: number; failed: number } {
+    return this.taskCountsSinceOffpeakStmt.get({ '@fromIso': fromIso }) as { completed: number; failed: number }
   }
 
   setConfig(key: string, value: string): void {

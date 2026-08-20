@@ -150,15 +150,22 @@ describe('OffPeakSaver', () => {
     expect(second.getTask(queued.task.id)?.status).toBe('pending')
   })
 
-  it('日账单汇总执行次数与节省金额', async () => {
+  it('日账单只统计真正错峰任务（realtime 不计入执行/节省）', async () => {
     stubFetch()
     const saver = makeSaver({ peak_hours: offPeakHours() })
     await saver.submitTask({ prompt: '任务 A' }, 0)
     const report = saver.getReport('day')
-    expect(report.executions).toBe(1)
-    expect(report.savings).toBeCloseTo(5.71, 2)
-    expect(report.equivalent_free_tokens).toBe(3_806_666)
+    expect(report.executions).toBe(0) // realtime 不计入错峰执行
+    expect(report.savings).toBe(0)
+    expect(report.equivalent_free_tokens).toBe(0)
     expect(saver.renderReport('day')).toContain('错峰省钱账单')
+
+    // 真正错峰任务（priority 1）入队后 drain，计入账单
+    await saver.submitTask({ prompt: '任务 B' }, 1)
+    await saver.runPendingNowForTest()
+    const report2 = saver.getReport('day')
+    expect(report2.executions).toBe(1)
+    expect(report2.savings).toBeCloseTo(5.71, 2)
   })
 
   it('取消排队任务', async () => {
@@ -188,7 +195,8 @@ describe('OffPeakSaver', () => {
     await saver.submitTask({ prompt: '无 key 任务' }, 0)
     expect(fetchMock).not.toHaveBeenCalled()
     const report = saver.getReport('day')
-    expect(report.failed_tasks).toBe(1)
+    // 实时任务（priority 0）不计入错峰账单统计
+    expect(report.failed_tasks).toBe(0)
   })
 
   it('计费按请求发起时刻：高峰发起、空闲返回按原价（P0-1）', async () => {

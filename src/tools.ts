@@ -117,7 +117,7 @@ export function createTools(saver: OffPeakSaver): Array<ReturnType<typeof define
           task_id: task.id,
           status: task.status,
           priority: priorityLabel,
-          message: `✅ 完成 | 💰 节省 ${money(task.savings, currency())}${discount}`,
+          message: `任务已完成${discount}`,
           content_preview: result.immediate.content.slice(0, 500),
           cost_actual: task.cost_actual,
           cost_baseline: task.cost_baseline,

@@ -50,3 +50,8 @@ declare module '*.module.css' {
   const classMap: Record<string, string>
   export default classMap
 }
+
+declare module '*.svg?raw' {
+  const source: string
+  export default source
+}

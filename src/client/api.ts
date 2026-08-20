@@ -107,9 +107,11 @@ export function submitTask(input: SubmitPanelInput): Promise<{
 
 export function money(amount: number, currency: 'CNY' | 'USD'): string {
   const symbol = currency === 'CNY' ? '¥' : '$'
-  // 不足 1 分钱的金额显示 4 位小数，避免“省了钱但显示 ¥0.00”
-  const digits = amount !== 0 && Math.abs(amount) < 0.01 ? 4 : 2
-  return `${symbol}${amount.toFixed(digits)}`
+  // 大于 0 但不足 1 分钱的金额统一显示为 <0.01，真实数值仍存后端，可查明细
+  if (amount !== 0 && Math.abs(amount) < 0.01) {
+    return `${symbol}<0.01`
+  }
+  return `${symbol}${amount.toFixed(2)}`
 }
 
 export function formatClock(iso: string): string {

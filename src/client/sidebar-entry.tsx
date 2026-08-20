@@ -7,6 +7,11 @@ import { useEffect, useState } from 'react'
 import { OffpeakPanel } from './OffpeakPanel.tsx'
 import css from './sidebar-entry.module.css'
 import type { zh } from './locales.ts'
+import iconWhiteRaw from './assets/icon_white.svg?raw'
+import iconBlackRaw from './assets/icon_black.svg?raw'
+
+const iconWhite = `data:image/svg+xml;base64,${btoa(iconWhiteRaw)}`
+const iconBlack = `data:image/svg+xml;base64,${btoa(iconBlackRaw)}`
 
 /** 模块级共享开关状态：按钮与浮层分处不同槽，需要同步。 */
 let openState = false
@@ -40,7 +45,10 @@ export function SidebarEntry({ t, wide }: {
       title={t('nav')}
       onClick={() => { toggle(!open) }}
     >
-      <span className={css.icon}>💰</span>
+      <span className={css.iconWrap}>
+        <img className={css.iconImg} src={iconBlack} alt="" draggable={false} />
+        <img className={`${css.iconImg} ${css.iconDark}`} src={iconWhite} alt="" draggable={false} />
+      </span>
       {wide ? <span>{t('nav')}</span> : null}
     </button>
   )

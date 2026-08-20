@@ -6,12 +6,16 @@ import {
   formatClock,
   loadOverview,
   money,
-  submitTask,
   type PanelOverview,
   type PanelTask,
 } from './api.ts'
 import css from './panel.module.css'
 import type { zh } from './locales.ts'
+import refreshBlackRaw from './assets/refresh.svg?raw'
+import refreshWhiteRaw from './assets/refresh_white.svg?raw'
+
+const refreshBlack = `data:image/svg+xml;base64,${btoa(refreshBlackRaw)}`
+const refreshWhite = `data:image/svg+xml;base64,${btoa(refreshWhiteRaw)}`
 
 export type OffpeakPanelProps = {
   t: (key: keyof typeof zh) => string
@@ -46,7 +50,7 @@ function statusClass(status: string): string {
   }
 }
 
-function TaskTable({ tasks, t, onCancel }: {
+function TaskList({ tasks, t, onCancel }: {
   tasks: PanelTask[]
   t: (key: keyof typeof zh) => string
   onCancel: (id: string) => void
@@ -55,39 +59,24 @@ function TaskTable({ tasks, t, onCancel }: {
     return <div className={css.empty}>{t('queueEmpty')}</div>
   }
   return (
-    <table className={css.table}>
-      <thead>
-        <tr>
-          <th>{t('taskTitle')}</th>
-          <th>{t('taskStatus')}</th>
-          <th>{t('taskPriority')}</th>
-          <th>{t('taskCreated')}</th>
-          <th>{t('taskAction')}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {tasks.map((task) => (
-          <tr key={task.id}>
-            <td className={css.truncate} title={task.prompt}>{task.title}</td>
-            <td><span className={`${css.status} ${statusClass(task.status)}`}>{statusLabel(task.status, t)}</span></td>
-            <td>{priorityLabel(task.priority, t)}</td>
-            <td className={css.mono}>{formatClock(task.created_at)}</td>
-            <td>
-              {task.status === 'pending' || task.status === 'paused'
-                ? (
-                  <button
-                    className={css.button}
-                    onClick={() => { onCancel(task.id) }}
-                  >
-                    {t('taskCancel')}
-                  </button>
-                )
-                : <span className={css.muted}>—</span>}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <ul className={css.taskList}>
+      {tasks.map((task) => (
+        <li key={task.id} className={css.taskRow}>
+          <div className={css.taskMain}>
+            <span className={css.taskTitle} title={task.prompt}>{task.title}</span>
+            <span className={`${css.status} ${statusClass(task.status)}`}>{statusLabel(task.status, t)}</span>
+          </div>
+          <div className={css.taskMeta}>
+            <span className={css.muted}>{priorityLabel(task.priority, t)} · {formatClock(task.created_at)}</span>
+            {(task.status === 'pending' || task.status === 'paused') && (
+              <button className={css.button} onClick={() => { onCancel(task.id) }}>
+                {t('taskCancel')}
+              </button>
+            )}
+          </div>
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -122,25 +111,16 @@ function RunningSection({ tasks, t, now, streams, onCancel }: {
         const stream = streams[task.id]
         const hasStream = stream !== undefined && (stream.text !== '' || stream.reasoning !== '')
         return (
-          <div key={task.id} className={css.streamRow}>
-            <table className={css.table}>
-              <tbody>
-                <tr>
-                  <td className={css.truncate} title={task.prompt}>{task.title}</td>
-                  <td className={css.mono}>
-                    {task.executed_at !== null ? `${t('startedAt')} ${formatClock(task.executed_at)}` : '—'}
-                  </td>
-                  <td className={css.mono}>
-                    {task.executed_at !== null ? `${t('elapsed')} ${formatElapsed(task.executed_at, now)}` : '—'}
-                  </td>
-                  <td>
-                    <button className={css.button} onClick={() => { onCancel(task.id) }}>
-                      {t('taskCancel')}
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+          <div key={task.id} className={css.runningRow}>
+            <div className={css.runningHead}>
+              <span className={css.taskTitle} title={task.prompt}>{task.title}</span>
+              <span className={css.mono}>
+                {task.executed_at !== null ? `${t('elapsed')} ${formatElapsed(task.executed_at, now)}` : '—'}
+              </span>
+              <button className={css.button} onClick={() => { onCancel(task.id) }}>
+                {t('taskCancel')}
+              </button>
+            </div>
             <div className={css.streamBox}>
               {!hasStream
                 ? <span className={css.streamEmpty}>{t('streamWaiting')}</span>
@@ -162,144 +142,10 @@ function RunningSection({ tasks, t, now, streams, onCancel }: {
   )
 }
 
-function RecentTable({ tasks, t }: { tasks: PanelTask[]; t: (key: keyof typeof zh) => string }): React.ReactNode {
-  if (tasks.length === 0) {
-    return <div className={css.empty}>{t('recentEmpty')}</div>
-  }
-  return (
-    <table className={css.table}>
-      <thead>
-        <tr>
-          <th>{t('taskTitle')}</th>
-          <th>{t('taskStatus')}</th>
-          <th>{t('taskTokens')}</th>
-          <th>{t('taskSavings')}</th>
-          <th>{t('taskCreated')}</th>
-          <th>{t('execTime')}</th>
-          <th>{t('taskResultPath')}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {tasks.map((task) => (
-          <tr key={task.id}>
-            <td className={css.truncate} title={task.prompt}>{task.title}</td>
-            <td><span className={`${css.status} ${statusClass(task.status)}`}>{statusLabel(task.status, t)}</span></td>
-            <td className={css.mono}>
-              {task.status === 'completed'
-                ? `${task.input_tokens.toLocaleString()} → ${task.output_tokens.toLocaleString()}`
-                : '—'}
-            </td>
-            <td className={css.savings}>
-              {task.status === 'completed' ? `¥${task.savings.toFixed(4)}` : '—'}
-            </td>
-            <td className={css.mono}>{formatClock(task.created_at)}</td>
-            <td className={css.mono}>
-              {task.executed_at !== null && task.completed_at !== null
-                ? `${formatClock(task.executed_at)} → ${formatClock(task.completed_at)}`
-                : '—'}
-            </td>
-            <td className={`${css.mono} ${css.truncate}`}>{task.result_path ?? '—'}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  )
-}
-
-function SubmitForm({ t, onSubmitted }: {
-  t: (key: keyof typeof zh) => string
-  onSubmitted: () => Promise<void>
-}): React.ReactNode {
-  const [prompt, setPrompt] = useState('')
-  const [title, setTitle] = useState('')
-  const [priority, setPriority] = useState<'realtime' | 'offpeak' | 'background'>('offpeak')
-  const [submitting, setSubmitting] = useState(false)
-  const [feedback, setFeedback] = useState<string | null>(null)
-  const [feedbackKind, setFeedbackKind] = useState<'ok' | 'error'>('ok')
-
-  const doSubmit = async (): Promise<void> => {
-    if (prompt.trim() === '') {
-      setFeedback(t('submitEmpty'))
-      setFeedbackKind('error')
-      return
-    }
-    setSubmitting(true)
-    setFeedback(null)
-    try {
-      const result = await submitTask({ prompt: prompt.trim(), title: title.trim() || undefined, priority })
-      setFeedback(`${t('submitSuccess')}：${result.message}`)
-      setFeedbackKind('ok')
-      setPrompt('')
-      setTitle('')
-      await onSubmitted()
-    } catch (error) {
-      setFeedback(`${t('submitError')}：${error instanceof Error ? error.message : String(error)}`)
-      setFeedbackKind('error')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <div className={`${css.section} ${css.submitSection}`}>
-      <div className={css.sectionHead}>
-        <h3 className={css.sectionTitle}>{t('submitTitle')}</h3>
-      </div>
-      <div className={css.submitBody}>
-        <label className={css.field}>
-          <span className={css.fieldLabel}>{t('submitPrompt')}</span>
-          <textarea
-            className={css.textarea}
-            value={prompt}
-            placeholder={t('submitPromptPlaceholder')}
-            rows={3}
-            onChange={(event) => { setPrompt(event.target.value) }}
-          />
-        </label>
-        <div className={css.submitRow}>
-          <label className={css.field}>
-            <span className={css.fieldLabel}>{t('submitTitleLabel')}</span>
-            <input
-              className={css.input}
-              value={title}
-              onChange={(event) => { setTitle(event.target.value) }}
-            />
-          </label>
-          <label className={css.field}>
-            <span className={css.fieldLabel}>{t('submitPriority')}</span>
-            <select
-              className={css.input}
-              value={priority}
-              onChange={(event) => { setPriority(event.target.value as typeof priority) }}
-            >
-              <option value="offpeak">{t('submitPriorityOffpeak')}</option>
-              <option value="realtime">{t('submitPriorityRealtime')}</option>
-              <option value="background">{t('submitPriorityBackground')}</option>
-            </select>
-          </label>
-          <button
-            className={css.button}
-            disabled={submitting}
-            onClick={() => { void doSubmit() }}
-          >
-            {submitting ? t('submitting') : t('submitButton')}
-          </button>
-        </div>
-        {feedback !== null && (
-          <p className={feedbackKind === 'ok' ? css.feedbackOk : css.feedbackError} role="status">
-            {feedback}
-          </p>
-        )}
-      </div>
-    </div>
-  )
-}
-
 export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
   const [state, setState] = useState<PanelOverview | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [period, setPeriod] = useState<'day' | 'week' | 'month'>('day')
   const [cancelling, setCancelling] = useState<Set<string>>(new Set())
   const [nowTick, setNowTick] = useState(() => Date.now())
   const [streamTexts, setStreamTexts] = useState<Record<string, TaskStreamText>>({})
@@ -402,16 +248,11 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
     )
   }
 
-  const report = state.reports[period]
   const queue = state.pending
 
   return (
     <div className={css.panel}>
       <div className={css.header}>
-        <div>
-          <h2 className={css.title}>{t('title')}</h2>
-          <p className={css.subtitle}>{t('subtitle')}</p>
-        </div>
         <span className={`${css.badge} ${state.phase === 'peak' ? css.badgePeak : css.badgeOffpeak}`}>
           {state.phase === 'peak' ? t('phasePeak') : t('phaseOffpeak')}
         </span>
@@ -421,14 +262,20 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
           </span>
         )}
         <span className={css.spacer} />
-        <button className={css.button} disabled={loading} onClick={() => { void load() }}>
-          {loading ? t('loading') : t('refresh')}
+        <button
+          className={css.button}
+          disabled={loading}
+          title={t('refresh')}
+          onClick={() => { void load() }}
+        >
+          <span className={css.refreshWrap}>
+            <img className={css.refreshImg} src={refreshBlack} alt="" draggable={false} />
+            <img className={`${css.refreshImg} ${css.refreshDark}`} src={refreshWhite} alt="" draggable={false} />
+          </span>
         </button>
       </div>
 
       {error !== null && <div className={css.error} role="alert">{error}</div>}
-
-      <SubmitForm t={t} onSubmitted={load} />
 
       <div className={css.cards}>
         <div className={css.card}>
@@ -475,47 +322,7 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
         <div className={css.sectionHead}>
           <h3 className={css.sectionTitle}>{t('queueTitle')}（{queue.length}）</h3>
         </div>
-        <TaskTable tasks={queue} t={t} onCancel={(id) => { void cancel(id) }} />
-      </div>
-
-      <div className={css.section}>
-        <div className={css.sectionHead}>
-          <h3 className={css.sectionTitle}>{t('recentTitle')}</h3>
-          <div className={css.tabs}>
-            {(['day', 'week', 'month'] as const).map((key) => (
-              <button
-                key={key}
-                className={`${css.tab} ${period === key ? css.tabActive : ''}`}
-                onClick={() => { setPeriod(key) }}
-              >
-                {t(`report${key[0].toUpperCase()}${key.slice(1)}` as keyof typeof zh)}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className={css.cards} style={{ padding: '10px 14px' }}>
-          <div className={css.card}>
-            <div className={css.cardLabel}>{t('reportExecutions')}</div>
-            <div className={css.cardValue}>{report.executions}</div>
-          </div>
-          <div className={css.card}>
-            <div className={css.cardLabel}>{t('reportActual')}</div>
-            <div className={css.cardValue}>{money(report.cost_actual, report.currency)}</div>
-          </div>
-          <div className={css.card}>
-            <div className={css.cardLabel}>{t('reportBaseline')}</div>
-            <div className={css.cardValue}>{money(report.cost_baseline, report.currency)}</div>
-          </div>
-          <div className={css.card}>
-            <div className={css.cardLabel}>{t('reportSavings')}</div>
-            <div className={css.cardValue} style={{ color: '#3fb950' }}>{money(report.savings, report.currency)}</div>
-          </div>
-          <div className={css.card}>
-            <div className={css.cardLabel}>{t('reportFreeTokens')}</div>
-            <div className={css.cardValue}>{report.equivalent_free_tokens.toLocaleString()}</div>
-          </div>
-        </div>
-        <RecentTable tasks={state.recent} t={t} />
+        <TaskList tasks={queue} t={t} onCancel={(id) => { void cancel(id) }} />
       </div>
     </div>
   )

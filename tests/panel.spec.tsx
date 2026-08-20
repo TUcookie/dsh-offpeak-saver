@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { OffpeakPanel } from '../src/client/OffpeakPanel.tsx'
+import { money } from '../src/client/api.ts'
 import { zh } from '../src/client/locales.ts'
 import type { PanelOverview } from '../src/client/api.ts'
 
@@ -109,7 +110,7 @@ function fakeOverview(): PanelOverview {
 }
 
 describe('OffpeakPanel 渲染', () => {
-  it('展示时段、节省金额、待执行任务与历史任务（真实 DOM 渲染）', async () => {
+  it('展示时段、节省金额与待执行任务（真实 DOM 渲染）', async () => {
     stubEventSource()
     vi.stubGlobal('fetch', vi.fn(async () => {
       return new Response(JSON.stringify({ ok: true, value: fakeOverview() }), {
@@ -121,17 +122,18 @@ describe('OffpeakPanel 渲染', () => {
     render(<OffpeakPanel t={(key) => zh[key]} />)
 
     await waitFor(() => {
-      expect(screen.getByText('错峰省钱调度器')).toBeTruthy()
+      // 抽屉宿主自带标题，面板内不再重复渲染标题；以时段徽章出现作为渲染完成的信号
+      expect(screen.getByText('空闲时段（半价）')).toBeTruthy()
     })
-    expect(screen.getByText('空闲时段（半价）')).toBeTruthy()
     expect(screen.getByText('今日节省')).toBeTruthy()
     expect(screen.getAllByText('¥0.10').length).toBeGreaterThanOrEqual(3)
     expect(screen.getAllByText(/待执行任务/).length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('批量摘要')).toBeTruthy()
     expect(screen.getByText('排队中')).toBeTruthy()
-    expect(screen.getByText('审计修复验证')).toBeTruthy()
-    expect(screen.getByText('已完成')).toBeTruthy()
     expect(screen.getByText('取消')).toBeTruthy()
+    // 最近任务/报告区已按要求移除，不应出现
+    expect(screen.queryByText('最近任务')).toBeNull()
+    expect(screen.queryByText('提交任务')).toBeNull()
   })
 
   it('取消按钮调用 API 并刷新列表', async () => {
@@ -201,53 +203,12 @@ describe('OffpeakPanel 渲染', () => {
 
     render(<OffpeakPanel t={(key) => zh[key]} />)
     await waitFor(() => {
-      expect(screen.getByText('错峰省钱调度器')).toBeTruthy()
+      expect(screen.getByText('空闲时段（半价）')).toBeTruthy()
     })
     expect(fetches).toBe(1)
 
     FakeEventSource.instances.at(-1)?.emit({ type: 'task-completed' })
     await waitFor(() => expect(fetches).toBeGreaterThanOrEqual(2))
-  })
-
-  it('提交表单：填写 prompt 选择错峰后调用 /submit 并刷新', async () => {
-    stubEventSource()
-    const calls: string[] = []
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input)
-      calls.push(url)
-      if (url.includes('/submit')) {
-        return new Response(JSON.stringify({
-          ok: true,
-          value: { task_id: 'new-task', status: 'pending', priority: 1, message: '已加入错峰队列' },
-        }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-      return new Response(JSON.stringify({ ok: true, value: fakeOverview() }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    }))
-
-    render(<OffpeakPanel t={(key) => zh[key]} />)
-    await waitFor(() => {
-      expect(screen.getByText('提交任务')).toBeTruthy()
-    })
-
-    const textarea = screen.getByPlaceholderText(/例如：#offpeak/)
-    const button = screen.getByText('加入队列')
-    fireEvent.change(textarea, { target: { value: '#offpeak 写一百篇摘要' } })
-    fireEvent.click(button)
-
-    await waitFor(() => {
-      expect(calls.some((url) => url.includes('/submit'))).toBe(true)
-    })
-    const submitCall = calls.find((url) => url.includes('/submit'))
-    expect(submitCall).toBeDefined()
-    await waitFor(() => {
-      expect(screen.getByText(/已提交/)).toBeTruthy()
-    })
   })
 
   it('SSE task-stream 增量实时显示在正在执行区（逐字输出钩子）', async () => {
@@ -286,5 +247,16 @@ describe('OffpeakPanel 渲染', () => {
       expect(screen.getByText(/先想清楚/)).toBeTruthy()
       expect(screen.getByText(/最终答案/)).toBeTruthy()
     })
+  })
+})
+
+describe('money 显示', () => {
+  it('金额大于 0 但小于 0.01 显示 <0.01，真实数值仍在后端', () => {
+    expect(money(0.005, 'CNY')).toBe('¥<0.01')
+    expect(money(0.009999, 'USD')).toBe('$<0.01')
+    expect(money(0, 'CNY')).toBe('¥0.00')
+    expect(money(0.01, 'CNY')).toBe('¥0.01')
+    expect(money(0.0154, 'CNY')).toBe('¥0.02')
+    expect(money(0.1, 'CNY')).toBe('¥0.10')
   })
 })

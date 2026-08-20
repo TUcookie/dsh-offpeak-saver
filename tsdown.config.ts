@@ -11,6 +11,7 @@ import type { UserConfig } from 'tsdown'
 const PACKAGE_ID = 'dsh-offpeak-saver'
 const CSS_VIRTUAL_PREFIX = '\0dsh-css:'
 const CSS_VIRTUAL_SUFFIX = '.mjs'
+const RAW_VIRTUAL_PREFIX = '\0dsh-raw:'
 
 const CLIENT_EXTERNALS = [
   'react',
@@ -65,6 +66,22 @@ const client: UserConfig = {
           throw new Error(`${fileName} 含有 node: require。DSH 网页 ModuleLoader 不能加载 Node 内置模块，请改用浏览器构建`)
         }
       }
+    },
+  }, {
+    name: 'dsh-raw-assets-inline',
+    resolveId(source: string, importer: string | undefined) {
+      if (!source.endsWith('.svg?raw')) return null
+      const cleanSource = source.replace(/\?raw$/, '')
+      const abs = importer !== undefined ? resolvePath(dirname(importer), cleanSource) : cleanSource
+      if (existsSync(abs)) return RAW_VIRTUAL_PREFIX + abs
+      return null
+    },
+    async load(virtualId: string) {
+      if (!virtualId.startsWith(RAW_VIRTUAL_PREFIX)) return null
+      const fileId = virtualId.slice(RAW_VIRTUAL_PREFIX.length)
+      this.addWatchFile(fileId)
+      const source = await readFile(fileId, 'utf8')
+      return `export default ${JSON.stringify(source)};`
     },
   }, {
     name: 'dsh-css-modules-inline',

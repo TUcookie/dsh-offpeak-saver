@@ -119,6 +119,20 @@ describe('方案 B：原会话唤醒执行', () => {
     expect(result!.sessionId).toBe('session-live-1')
   })
 
+  it('插件重启后从 Harness 运行时注册表恢复在线会话，不会回退 resume', async () => {
+    const fakeAgent = makeFakeAgent()
+    // 模拟新的插件实例：liveAgents 为空，但 Harness 仍持有原会话。
+    const runner = createDshSessionRunner(makeCtx({ get: () => fakeAgent }))
+
+    const result = await runner.runInLiveSession!(
+      { prompt: '重启后继续执行', session_id: 'session-live-1' },
+      new AbortController().signal,
+    )
+
+    expect(fakeAgent.followup).toHaveBeenCalledTimes(1)
+    expect(result?.content).toContain('原会话产出的结果')
+  })
+
   it('agent 不在注册表时返回 null（调用方回退独立会话）', async () => {
     const runner = createDshSessionRunner(makeCtx({ get: () => undefined }))
     const result = await runner.runInLiveSession!(

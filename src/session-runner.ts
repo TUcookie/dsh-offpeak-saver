@@ -116,6 +116,17 @@ interface SessionLike {
   }>
 }
 
+function isLiveAgent(value: unknown): value is AgentLike {
+  if (value === null || typeof value !== 'object') return false
+  const agent = value as Partial<AgentLike>
+  return typeof agent.id === 'string'
+    && typeof agent.followup === 'function'
+    && typeof agent.whenIdle === 'function'
+    && typeof agent.cancel === 'function'
+    && agent.session !== undefined
+    && Array.isArray(agent.session.events)
+}
+
 export class CancelledSessionError extends Error {
   constructor() {
     super('会话内执行已被取消')
@@ -331,14 +342,19 @@ export function createDshSessionRunner(ctx: unknown): SessionRunner {
       onStream?: (delta: SessionStreamDelta) => void,
     ): Promise<SessionRunResult | null> {
       if (payload.session_id === undefined || payload.session_id === '') return null
-      const agent = liveAgents.get(payload.session_id)
+      const sessionId = payload.session_id
+      // 服务重启会清空本插件的 liveAgents，但 Harness 自己仍保留在线 agent。
+      // 优先从运行时注册表恢复，避免对一个 live session 错误调用 resume()。
+      const fromRuntime = agents.get?.(sessionId)
+      const agent = isLiveAgent(fromRuntime)
+        ? fromRuntime
+        : liveAgents.get(sessionId)
       if (agent === undefined) return null
-      // 确认 agent 仍在 live registry 中（dsh agents.get 可查）
-      const stillLive = agents.get?.(String(agent.id)) !== undefined
-      if (!stillLive) {
-        liveAgents.delete(String(agent.id))
+      if (agents.get !== undefined && fromRuntime === undefined) {
+        liveAgents.delete(sessionId)
         return null
       }
+      liveAgents.set(sessionId, agent)
       activeAgents.add(agent)
       try {
         return await wakeAgent(agent, payload, signal, model, onStream)

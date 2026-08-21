@@ -363,7 +363,7 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
       <section className={css.controlCard}>
         <div className={css.controlCopy}>
           <span className={css.controlTitle}>{t('concurrency')}</span>
-          <span className={css.controlHint}>{t('concurrencyHint')} {state.concurrency.effective}/{state.concurrency.configured}</span>
+          <span className={css.controlHint}>{t('concurrencyHint')} {state.running.length} {t('concurrencyItems')}</span>
         </div>
         <label className={css.concurrency}>
           <input

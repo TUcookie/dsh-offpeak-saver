@@ -131,6 +131,8 @@ describe('OffpeakPanel 渲染', () => {
     expect(screen.getByText('今日节省')).toBeTruthy()
     expect(screen.getByText('当前安排')).toBeTruthy()
     expect(screen.getByText('正在按顺序执行')).toBeTruthy()
+    expect(screen.getByText('当前正在执行 0 项')).toBeTruthy()
+    expect(screen.queryByText('当前正在处理 2/3')).toBeNull()
     expect(screen.getAllByText('¥0.10').length).toBeGreaterThanOrEqual(3)
     expect(screen.getAllByText(/待执行任务/).length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('批量摘要')).toBeTruthy()

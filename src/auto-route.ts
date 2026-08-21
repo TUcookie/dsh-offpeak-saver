@@ -194,7 +194,7 @@ export function installAutoRouting(ctx: Context, saver: OffPeakSaver, sessionRun
       if (RUN_NOW_RE.test(text)) {
         const taskId = autoQueued.get(agentId)
         if (taskId !== undefined) {
-          const reply = '正在为你立即执行该任务。执行过程会显示在当前会话，完成后可在错峰省钱面板查看结果与节省金额。'
+          const reply = '好的！开始执行——'
           if (!recordSchedulerReply(payload.agent, message, reply, payload.turn, payload.step)) return next()
           autoQueued.delete(agentId)
           runTaskAfterConfirmation(payload.agent, saver, taskId, (error) => {
@@ -243,7 +243,7 @@ export function installAutoRouting(ctx: Context, saver: OffPeakSaver, sessionRun
       autoQueued.set(agentId, task.id)
       const nextOff = saver.nextOffPeak()
       const label = nextOff?.label ?? '下一空闲时段'
-      const reply = `现在已处于高峰时段，已为您排队到错峰时段执行（${label}，半价）。若需要立即执行，请回复“现在做”；若需要取消该任务，请回复“取消”。`
+      const reply = `当前是高峰时段，已帮您安排到${label}错峰执行（享半价折扣）。\n如需立即处理，请回复“现在做”；如需取消，请回复“取消”。`
       if (!recordSchedulerReply(payload.agent, message, reply, payload.turn, payload.step)) {
         // 未知/不兼容运行时没有公开 Session.append 时宁可放行，不创建隐藏队列，
         // 避免“已经排队”却不给用户任何确认。

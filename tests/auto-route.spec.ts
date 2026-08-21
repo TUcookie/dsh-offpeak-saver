@@ -139,8 +139,7 @@ describe('installAutoRouting', () => {
     expect(appended.map((event) => event.type)).toEqual(['user/message', 'assistant/message'])
     expect((appended[0].data as { content: Array<{ text: string }> }).content[0].text).toBe('写一份本周工作总结')
     const reply = (appended[1].data as { message: { content: Array<{ text: string }>; source: { provider: string } } }).message
-    expect(reply.content[0].text).toContain('已为您排队到错峰时段执行')
-    expect(reply.content[0].text).toContain('现在做')
+    expect(reply.content[0].text).toBe('当前是高峰时段，已帮您安排到今日 18:00错峰执行（享半价折扣）。\n如需立即处理，请回复“现在做”；如需取消，请回复“取消”。')
     expect(reply.content[0].text).not.toContain('不要执行任何任务')
     expect(reply.source.provider).toBe('dsh-offpeak-saver')
   })
@@ -180,7 +179,7 @@ describe('installAutoRouting', () => {
     expect(runNow).toEqual([])
     expect(next).not.toHaveBeenCalled()
     expect(result).toEqual({ kind: 'enter', messages: [] })
-    expect((appended[1].data as { message: { content: Array<{ text: string }> } }).message.content[0].text).toContain('正在为你立即执行')
+    expect((appended[1].data as { message: { content: Array<{ text: string }> } }).message.content[0].text).toBe('好的！开始执行——')
     await waitForScheduledWork()
     expect(runNow).toEqual(['task-auto-1'])
   })

@@ -2,7 +2,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SRC_TGZ="${1:-$ROOT/dsh-offpeak-saver-0.2.0.tgz}"
+SRC_TGZ="${1:-$(find "$ROOT" -maxdepth 1 -type f -name 'dsh-offpeak-saver-*.tgz' -print -quit)}"
+if [ -z "$SRC_TGZ" ]; then
+  echo "missing packed tarball (run pnpm pack first)" >&2
+  exit 1
+fi
 TMP="$(mktemp -d)"
 TGZ="$TMP/plugin.tgz"
 cp "$SRC_TGZ" "$TGZ"

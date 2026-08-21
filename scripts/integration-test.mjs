@@ -9,13 +9,14 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const tgz = path.resolve(process.argv[2] ?? path.join(root, 'dsh-offpeak-saver-0.2.0.tgz'))
+const packedTarball = readdirSync(root).find((file) => /^dsh-offpeak-saver-.+\.tgz$/.test(file))
+const tgz = path.resolve(process.argv[2] ?? path.join(root, packedTarball ?? 'dsh-offpeak-saver.tgz'))
 
 if (!existsSync(tgz)) {
   console.error(`[integration] missing tarball: ${tgz}`)

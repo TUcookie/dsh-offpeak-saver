@@ -25,9 +25,15 @@ jobs:
       - name: Unit tests
         run: pnpm test
       - name: Pack
-        run: pnpm pack
+        id: pack
+        shell: bash
+        run: |
+          pnpm pack
+          package="$(find . -maxdepth 1 -type f -name 'dsh-offpeak-saver-*.tgz' -print -quit)"
+          test -n "$package"
+          echo "path=$package" >> "$GITHUB_OUTPUT"
       - name: Packaged integration + real tool invocation
-        run: node scripts/integration-test.mjs ./dsh-offpeak-saver-0.1.0.tgz
+        run: node scripts/integration-test.mjs "${{ steps.pack.outputs.path }}"
 
   dsh-smoke:
     runs-on: windows-latest
@@ -44,6 +50,13 @@ jobs:
       - name: Build
         run: pnpm run build
       - name: Pack
-        run: pnpm pack
+        id: pack
+        shell: bash
+        run: |
+          pnpm pack
+          package="$(find . -maxdepth 1 -type f -name 'dsh-offpeak-saver-*.tgz' -print -quit)"
+          test -n "$package"
+          echo "path=$package" >> "$GITHUB_OUTPUT"
       - name: Fresh DSH profile install + boot smoke
-        run: bash scripts/dsh-smoke.sh ./dsh-offpeak-saver-0.1.0.tgz
+        shell: bash
+        run: scripts/dsh-smoke.sh "${{ steps.pack.outputs.path }}"

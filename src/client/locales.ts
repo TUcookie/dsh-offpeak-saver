@@ -36,6 +36,7 @@ export const zh = {
   loading: '加载中…',
   error: '加载失败',
   retry: '重试',
+  githubLink: '在 GitHub 查看项目 ↗',
 
   statTodaySavings: '今日节省',
   statWeekSavings: '本周节省',
@@ -132,6 +133,7 @@ export const en: Record<keyof typeof zh, string> = {
   loading: 'Loading…',
   error: 'Failed to load',
   retry: 'Retry',
+  githubLink: 'View project on GitHub ↗',
 
   statTodaySavings: 'Saved today',
   statWeekSavings: 'Saved this week',

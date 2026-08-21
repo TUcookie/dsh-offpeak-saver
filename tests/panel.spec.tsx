@@ -139,6 +139,9 @@ describe('OffpeakPanel 渲染', () => {
     expect(screen.getByText('排队中')).toBeTruthy()
     expect(screen.getByText('#1')).toBeTruthy()
     expect(screen.getByText('取消')).toBeTruthy()
+    const githubLink = screen.getByRole('link', { name: '在 GitHub 查看项目 ↗' })
+    expect(githubLink.getAttribute('href')).toBe('https://github.com/TUcookie/dsh-offpeak-saver')
+    expect(githubLink.getAttribute('target')).toBe('_blank')
     // 最近任务/报告区已按要求移除，不应出现
     expect(screen.queryByText('最近任务')).toBeNull()
     expect(screen.queryByText('提交任务')).toBeNull()

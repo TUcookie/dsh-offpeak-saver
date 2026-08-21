@@ -413,6 +413,15 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
           onMove={(id, direction) => { void move(id, direction) }}
         />
       </div>
+
+      <a
+        className={css.githubLink}
+        href="https://github.com/TUcookie/dsh-offpeak-saver"
+        target="_blank"
+        rel="noreferrer"
+      >
+        {t('githubLink')}
+      </a>
     </div>
   )
 }

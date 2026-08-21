@@ -257,6 +257,27 @@ body[data-ds-dark-theme] .refreshImg:not(.refreshDark) {
   gap: 8px;
 }
 
+.githubLink {
+  align-self: center;
+  padding: 4px 8px;
+  color: var(--dsw-alias-text-l3, #57606a);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.githubLink:hover {
+  color: var(--dsw-alias-text-l1, #24292f);
+  text-decoration: underline;
+}
+
+body[data-ds-dark-theme] .githubLink {
+  color: var(--dsw-alias-text-l3, #8b949e);
+}
+
+body[data-ds-dark-theme] .githubLink:hover {
+  color: var(--dsw-alias-text-l1, #f0f6fc);
+}
+
 .metricCard {
   border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
   border-radius: 10px;

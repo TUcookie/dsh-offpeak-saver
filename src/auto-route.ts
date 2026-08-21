@@ -42,33 +42,17 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-/** 适合自动错峰的任务关键词（命中即视为可延后的批处理/文档类任务）。 */
-const DEFER_KEYWORDS = [
-  '总结', '摘要', '报告', '文档', '周报', '月报', '日报', '复盘', '纪要', '记录',
-  '笔记', '归档', '备份', '导出', '整理', '汇总', '翻译', '改写', '润色', '草稿',
-  '大纲', '计划', '规划', '方案', '调研', '梳理', '批量', '清单', '列表', '目录',
-  '索引', '介绍', '说明', '重构', '迁移', '批量处理', '架构分析',
-]
-
-/** 交互式任务关键词（命中即放行，让模型立即处理）。优先级高于 DEFER。 */
-const INTERACTIVE_KEYWORDS = [
-  '修复', '修一下', '调试', '实现', '写代码', '运行', '执行', '测试', '审查',
-  '解释', '回答', '看看', '检查', '部署', '提交', '推送', '发布', '改一下',
-  '更新', '删除', '创建', '报错', '错误',
-]
-
+/** 明确要求即时处理的措辞；其余长任务默认错峰。 */
 const URGENT_RE = /(立即|马上|尽快|现在就?做|现在做|紧急|urgent|realtime)/i
-const QUESTION_RE = /[？?]$|^(怎么|如何|为什么|什么|哪些|是否|能不能|可以吗|请问|帮我看看|解释一下)/
+const QUESTION_RE = /^(怎么|如何|为什么)/
 
-/** 判断一条用户消息该被自动分流到错峰，还是放行。 */
+/** 默认错峰；只有短消息、明确即时意图和“怎么/如何/为什么”问答直接放行。 */
 export function classifyTask(text: string): 'defer' | 'immediate' | 'skip' {
   const t = text.trim()
   if (t.length < 6) return 'skip'
   if (QUESTION_RE.test(t)) return 'skip'
   if (URGENT_RE.test(t)) return 'immediate'
-  if (INTERACTIVE_KEYWORDS.some((keyword) => t.includes(keyword))) return 'skip'
-  if (DEFER_KEYWORDS.some((keyword) => t.includes(keyword))) return 'defer'
-  return 'skip'
+  return 'defer'
 }
 
 /** 用户回复“现在做”的快捷指令。 */

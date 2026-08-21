@@ -3,19 +3,15 @@ import { classifyTask, installAutoRouting } from '../src/auto-route.ts'
 import type { OffPeakSaver, Priority, SubmitInput } from '../src/core.js'
 
 describe('classifyTask', () => {
-  it('把文档/批处理类任务识别为 defer', () => {
+  it('长任务默认进入错峰队列，不依赖任务关键词', () => {
     expect(classifyTask('帮我把项目结构总结成一份 Markdown 报告')).toBe('defer')
     expect(classifyTask('写一份本周工作总结')).toBe('defer')
     expect(classifyTask('批量翻译这 20 篇文档')).toBe('defer')
     expect(classifyTask('整理 D 盘的文件清单')).toBe('defer')
     expect(classifyTask('重构一下这个模块的代码')).toBe('defer')
-  })
-
-  it('把交互式任务放行', () => {
-    expect(classifyTask('帮我修复这个 bug')).toBe('skip')
-    expect(classifyTask('解释一下这段代码的作用')).toBe('skip')
-    expect(classifyTask('看看这个报错是什么原因')).toBe('skip')
-    expect(classifyTask('运行一下测试')).toBe('skip')
+    expect(classifyTask('帮我查下deepseek api的价格')).toBe('defer')
+    expect(classifyTask('帮我修复这个 bug')).toBe('defer')
+    expect(classifyTask('检查这个报错是什么原因')).toBe('defer')
   })
 
   it('紧急任务放行', () => {
@@ -23,10 +19,12 @@ describe('classifyTask', () => {
     expect(classifyTask('马上写一份周报')).toBe('immediate')
   })
 
-  it('问答/短消息放行', () => {
-    expect(classifyTask('今天天气怎么样？')).toBe('skip')
+  it('怎么/如何/为什么问答与短消息直接放行', () => {
+    expect(classifyTask('今天天气怎么样？')).toBe('defer')
     expect(classifyTask('你好')).toBe('skip')
     expect(classifyTask('怎么安装依赖')).toBe('skip')
+    expect(classifyTask('如何配置 API')).toBe('skip')
+    expect(classifyTask('为什么会报错')).toBe('skip')
   })
 })
 
@@ -160,14 +158,15 @@ describe('installAutoRouting', () => {
     expect(reply.source.provider).toBe('dsh-offpeak-saver')
   })
 
-  it('交互式任务放行，不创建任务', async () => {
+  it('非即时任务在高峰时默认排队，不再按任务类型直接放行', async () => {
     const { saver, created } = makeSaver('peak')
     const { ctx, listeners } = makeCtx()
     installAutoRouting(ctx, saver)
 
-    const { next } = await dispatch(listeners, [userMessage('帮我修复这个 bug')])
-    expect(created.length).toBe(0)
-    expect(next).toHaveBeenCalled()
+    const { next, result } = await dispatch(listeners, [userMessage('帮我修复这个 bug')])
+    expect(created.length).toBe(1)
+    expect(next).not.toHaveBeenCalled()
+    expect(result).toEqual({ kind: 'enter', messages: [] })
   })
 
   it('插件自己的通知消息放行，不递归拦截', async () => {

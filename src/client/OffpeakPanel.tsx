@@ -143,6 +143,19 @@ function RunningSection({ tasks, t, now, streams, onCancel }: {
   )
 }
 
+function MetricCard({ label, value, tone = 'default' }: {
+  label: string
+  value: string | number
+  tone?: 'default' | 'success' | 'accent'
+}): React.ReactNode {
+  return (
+    <div className={`${css.metricCard} ${tone === 'success' ? css.metricSuccess : tone === 'accent' ? css.metricAccent : ''}`}>
+      <div className={css.metricLabel}>{label}</div>
+      <div className={css.metricValue}>{value}</div>
+    </div>
+  )
+}
+
 export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
   const [state, setState] = useState<PanelOverview | null>(null)
   const [loading, setLoading] = useState(true)
@@ -267,17 +280,46 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
 
   return (
     <div className={css.panel}>
-      <div className={css.header}>
-        <span className={`${css.badge} ${state.phase === 'peak' ? css.badgePeak : css.badgeOffpeak}`}>
-          {state.phase === 'peak' ? t('phasePeak') : t('phaseOffpeak')}
-        </span>
-        {state.nextOffPeak !== null && (
-          <span className={css.muted} style={{ fontSize: 12 }}>
-            {t('nextOffpeak')}: {state.nextOffPeak}
-          </span>
-        )}
+      <section className={`${css.hero} ${state.phase === 'peak' ? css.heroPeak : css.heroOffpeak}`}>
+        <div className={css.heroTop}>
+          <div className={css.heroStatus}>
+            <span className={css.eyebrow}>{t('nav')}</span>
+            <span className={`${css.badge} ${state.phase === 'peak' ? css.badgePeak : css.badgeOffpeak}`}>
+              <span className={css.statusDot} />
+              {state.phase === 'peak' ? t('phasePeak') : t('phaseOffpeak')}
+            </span>
+          </div>
+          <button
+            className={`${css.button} ${css.iconButton}`}
+            disabled={loading}
+            title={t('refresh')}
+            aria-label={t('refresh')}
+            onClick={() => { void load() }}
+          >
+            <span className={css.refreshWrap}>
+              <img className={css.refreshImg} src={refreshBlack} alt="" draggable={false} />
+              <img className={`${css.refreshImg} ${css.refreshDark}`} src={refreshWhite} alt="" draggable={false} />
+            </span>
+          </button>
+        </div>
+        <div className={css.heroBody}>
+          <div>
+            <div className={css.heroLabel}>{t('statTodaySavings')}</div>
+            <div className={css.heroValue}>{money(state.reports.day.savings, state.reports.day.currency)}</div>
+          </div>
+          <div className={css.heroMeta}>
+            {state.nextOffPeak !== null && <span>{t('nextOffpeak')} · {state.nextOffPeak}</span>}
+            <strong>{queue.length} {t('statPending')}</strong>
+          </div>
+        </div>
+      </section>
+
+      <section className={css.controlCard}>
+        <div className={css.controlCopy}>
+          <span className={css.controlTitle}>{t('concurrency')}</span>
+          <span className={css.controlHint}>{t('concurrencyHint')} {state.concurrency.effective}/{state.concurrency.configured}</span>
+        </div>
         <label className={css.concurrency}>
-          <span>{t('concurrency')}</span>
           <input
             aria-label={t('concurrency')}
             type="range"
@@ -289,57 +331,19 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
             onChange={(event) => { void updateConcurrency(Number(event.target.value)) }}
           />
           <output className={css.concurrencyValue}>
-            {state.concurrency.effective}/{state.concurrency.configured}
+            {state.concurrency.configured}
           </output>
           {updatingConcurrency && <span className={css.muted}>{t('concurrencyUpdating')}</span>}
         </label>
-        <span className={css.spacer} />
-        <button
-          className={css.button}
-          disabled={loading}
-          title={t('refresh')}
-          onClick={() => { void load() }}
-        >
-          <span className={css.refreshWrap}>
-            <img className={css.refreshImg} src={refreshBlack} alt="" draggable={false} />
-            <img className={`${css.refreshImg} ${css.refreshDark}`} src={refreshWhite} alt="" draggable={false} />
-          </span>
-        </button>
-      </div>
+      </section>
 
       {error !== null && <div className={css.error} role="alert">{error}</div>}
 
-      <div className={css.cards}>
-        <div className={css.card}>
-          <div className={css.cardLabel}>{t('statTodaySavings')}</div>
-          <div className={css.cardValue} style={{ color: '#3fb950' }}>
-            {money(state.reports.day.savings, state.reports.day.currency)}
-          </div>
-        </div>
-        <div className={css.card}>
-          <div className={css.cardLabel}>{t('statWeekSavings')}</div>
-          <div className={css.cardValue} style={{ color: '#3fb950' }}>
-            {money(state.reports.week.savings, state.reports.week.currency)}
-          </div>
-        </div>
-        <div className={css.card}>
-          <div className={css.cardLabel}>{t('statMonthSavings')}</div>
-          <div className={css.cardValue} style={{ color: '#3fb950' }}>
-            {money(state.reports.month.savings, state.reports.month.currency)}
-          </div>
-        </div>
-        <div className={css.card}>
-          <div className={css.cardLabel}>{t('statExecutions')}</div>
-          <div className={css.cardValue}>{state.reports.day.executions}</div>
-        </div>
-        <div className={css.card}>
-          <div className={css.cardLabel}>{t('statFreeTokens')}</div>
-          <div className={css.cardValue}>{state.reports.day.equivalent_free_tokens.toLocaleString()}</div>
-        </div>
-        <div className={css.card}>
-          <div className={css.cardLabel}>{t('statPending')}</div>
-          <div className={css.cardValue}>{queue.length}</div>
-        </div>
+      <div className={css.metricGrid}>
+        <MetricCard label={t('statWeekSavings')} value={money(state.reports.week.savings, state.reports.week.currency)} tone="success" />
+        <MetricCard label={t('statMonthSavings')} value={money(state.reports.month.savings, state.reports.month.currency)} tone="success" />
+        <MetricCard label={t('statExecutions')} value={state.reports.day.executions} tone="accent" />
+        <MetricCard label={t('statFreeTokens')} value={state.reports.day.equivalent_free_tokens.toLocaleString()} />
       </div>
 
       <RunningSection

@@ -128,7 +128,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.effect(() => {
     const disposers = createTools(saver).map((tool) => ctx.tools.register(tool))
     const disposeHttp = registerPanelHttpWhenReady(ctx, saver)
-    const disposeAutoRouting = installAutoRouting(ctx, saver)
+    const disposeAutoRouting = installAutoRouting(ctx, saver, sessionRunner)
     saver.start()
     return async () => {
       for (const dispose of disposers) {

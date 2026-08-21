@@ -20,7 +20,7 @@
 
 .subtitle {
   margin: 2px 0 0;
-  color: var(--dsh-fg-muted, #8b949e);
+  color: var(--dsw-alias-label-secondary, #656d76);
   font-size: 11px;
 }
 
@@ -33,12 +33,12 @@
 
 .badgePeak {
   background: rgba(207, 34, 46, 0.16);
-  color: #f85149;
+  color: var(--dsw-static-red-600, #d1242f);
 }
 
 .badgeOffpeak {
   background: rgba(63, 185, 80, 0.16);
-  color: #3fb950;
+  color: var(--dsw-static-green-500, #2da44e);
 }
 
 .spacer {
@@ -46,17 +46,17 @@
 }
 
 .button {
-  border: 1px solid var(--dsh-border, #30363d);
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
   border-radius: 6px;
-  background: var(--dsh-bg-elevated, #161b22);
-  color: var(--dsh-fg, #e6edf3);
+  background: var(--dsw-alias-bg-layer-1, #f6f8fa);
+  color: var(--dsw-alias-label-primary, #1f2328);
   padding: 3px 9px;
   font-size: 11px;
   cursor: pointer;
 }
 
 .button:hover {
-  border-color: var(--dsh-border-hover, #8b949e);
+  border-color: var(--dsw-alias-border-l3, #8b949e);
 }
 
 .button:disabled {
@@ -100,15 +100,15 @@ body[data-ds-dark-theme] .refreshImg:not(.refreshDark) {
 }
 
 .card {
-  border: 1px solid var(--dsh-border, #30363d);
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
   border-radius: 8px;
-  background: var(--dsh-bg-elevated, #161b22);
+  background: var(--dsw-alias-bg-layer-1, #f6f8fa);
   padding: 8px 10px;
 }
 
 .cardLabel {
   font-size: 10px;
-  color: var(--dsh-fg-muted, #8b949e);
+  color: var(--dsw-alias-label-secondary, #656d76);
 }
 
 .cardValue {
@@ -119,9 +119,9 @@ body[data-ds-dark-theme] .refreshImg:not(.refreshDark) {
 }
 
 .section {
-  border: 1px solid var(--dsh-border, #30363d);
+  border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
   border-radius: 8px;
-  background: var(--dsh-bg-elevated, #161b22);
+  background: var(--dsw-alias-bg-layer-1, #f6f8fa);
   overflow: hidden;
 }
 
@@ -137,13 +137,13 @@ body[data-ds-dark-theme] .refreshImg:not(.refreshDark) {
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
-  background: var(--dsh-bg, #0d1117);
-  border-top: 1px solid var(--dsh-border-subtle, #21262d);
+  background: var(--dsw-alias-bg-base, #ffffff);
+  border-top: 1px solid var(--dsw-alias-border-l1, #eaeef2);
   font-family: var(--dsh-font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
 }
 
 .runningRow {
-  border-top: 1px solid var(--dsh-border-subtle, #21262d);
+  border-top: 1px solid var(--dsw-alias-border-l1, #eaeef2);
 }
 
 .runningRow:first-of-type {
@@ -163,16 +163,16 @@ body[data-ds-dark-theme] .refreshImg:not(.refreshDark) {
 }
 
 .streamReasoning {
-  color: var(--dsh-fg-muted, #8b949e);
+  color: var(--dsw-alias-label-secondary, #656d76);
   font-style: italic;
 }
 
 .streamText {
-  color: var(--dsh-fg, #e6edf3);
+  color: var(--dsw-alias-label-primary, #1f2328);
 }
 
 .streamEmpty {
-  color: var(--dsh-fg-muted, #8b949e);
+  color: var(--dsw-alias-label-secondary, #656d76);
   font-style: italic;
 }
 
@@ -181,7 +181,7 @@ body[data-ds-dark-theme] .refreshImg:not(.refreshDark) {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--dsh-border, #30363d);
+  border-bottom: 1px solid var(--dsw-alias-border-l2, #d0d7de);
 }
 
 .sectionTitle {
@@ -194,14 +194,14 @@ body[data-ds-dark-theme] .refreshImg:not(.refreshDark) {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #d29922;
+  background: var(--dsw-static-amber-500, #bf8700);
   animation: pulse 1.4s ease-in-out infinite;
 }
 
 .liveLabel {
   font-size: 11px;
   font-weight: 650;
-  color: #d29922;
+  color: var(--dsw-static-amber-600, #9a6700);
   letter-spacing: 0.05em;
 }
 
@@ -220,16 +220,16 @@ body[data-ds-dark-theme] .refreshImg:not(.refreshDark) {
   border: 1px solid transparent;
   border-radius: 5px;
   background: transparent;
-  color: var(--dsh-fg-muted, #8b949e);
+  color: var(--dsw-alias-label-secondary, #656d76);
   padding: 3px 9px;
   font-size: 12px;
   cursor: pointer;
 }
 
 .tabActive {
-  border-color: var(--dsh-border, #30363d);
-  background: var(--dsh-bg-active, #21262d);
-  color: var(--dsh-fg, #e6edf3);
+  border-color: var(--dsw-alias-border-l2, #d0d7de);
+  background: var(--dsw-alias-interactive-bg-active, #eaeef2);
+  color: var(--dsw-alias-label-primary, #1f2328);
 }
 
 .status {
@@ -240,33 +240,33 @@ body[data-ds-dark-theme] .refreshImg:not(.refreshDark) {
   white-space: nowrap;
 }
 
-.statusPending { background: rgba(88, 166, 255, 0.14); color: #58a6ff; }
-.statusRunning { background: rgba(210, 153, 34, 0.16); color: #d29922; }
-.statusPaused { background: rgba(163, 113, 247, 0.15); color: #a371f7; }
-.statusCompleted { background: rgba(63, 185, 80, 0.16); color: #3fb950; }
-.statusFailed { background: rgba(248, 81, 73, 0.14); color: #f85149; }
-.statusCancelled { background: rgba(139, 148, 158, 0.16); color: #8b949e; }
+.statusPending { background: rgba(88, 166, 255, 0.14); color: var(--dsw-static-blue-600, #0969da); }
+.statusRunning { background: rgba(191, 135, 0, 0.16); color: var(--dsw-static-amber-600, #9a6700); }
+.statusPaused { background: rgba(130, 80, 223, 0.15); color: var(--dsw-static-purple-600, #8250df); }
+.statusCompleted { background: rgba(63, 185, 80, 0.16); color: var(--dsw-static-green-500, #2da44e); }
+.statusFailed { background: rgba(248, 81, 73, 0.14); color: var(--dsw-static-red-600, #d1242f); }
+.statusCancelled { background: rgba(139, 148, 158, 0.16); color: var(--dsw-alias-label-tertiary, #6e7781); }
 
 .savings {
   font-weight: 650;
   font-variant-numeric: tabular-nums;
-  color: #3fb950;
+  color: var(--dsw-static-green-500, #2da44e);
 }
 
 .muted {
-  color: var(--dsh-fg-muted, #8b949e);
+  color: var(--dsw-alias-label-secondary, #656d76);
 }
 
 .empty {
   padding: 12px 10px;
-  color: var(--dsh-fg-muted, #8b949e);
+  color: var(--dsw-alias-label-secondary, #656d76);
   font-size: 11px;
   text-align: center;
 }
 
 .error {
   padding: 14px;
-  color: #f85149;
+  color: var(--dsw-static-red-600, #d1242f);
   font-size: 12px;
 }
 
@@ -290,7 +290,7 @@ body[data-ds-dark-theme] .refreshImg:not(.refreshDark) {
 
 .taskRow {
   padding: 8px 10px;
-  border-bottom: 1px solid var(--dsh-border-subtle, #21262d);
+  border-bottom: 1px solid var(--dsw-alias-border-l1, #eaeef2);
 }
 
 .taskRow:last-child {

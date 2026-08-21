@@ -285,6 +285,24 @@ export class TaskExecutor {
     if (runner === undefined) {
       throw new SessionOutputError('会话内执行器不可用')
     }
+    // 方案 B：任务排队时注册了原会话，且原会话仍存活 → 直接在原对话唤醒执行
+    if (runner.runInLiveSession !== undefined) {
+      const liveResult = await runner.runInLiveSession(payload, signal, model, (delta) => {
+        this.emit({ type: 'task-stream', taskId: task.id, kind: delta.kind, text: delta.text })
+      })
+      if (liveResult !== null) {
+        return {
+          content: liveResult.content,
+          usage: {
+            input_tokens: liveResult.usage.inputTokens,
+            output_tokens: liveResult.usage.outputTokens,
+            cache_hit_tokens: liveResult.usage.cacheReadTokens,
+          },
+          startedAt: new Date(),
+        }
+      }
+    }
+    // 原会话不可用（服务器重启/会话删除等）→ 回退独立 offpeak 会话
     const result = await runner.runTask(payload, signal, model, (delta) => {
       this.emit({ type: 'task-stream', taskId: task.id, kind: delta.kind, text: delta.text })
     })

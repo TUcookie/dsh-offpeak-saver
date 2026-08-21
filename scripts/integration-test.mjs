@@ -104,6 +104,9 @@ async function happyScenario() {
       disposer = typeof cleanup === 'function' ? cleanup : () => {}
       return disposer
     },
+    // 自动分流会在插件启动时注册 agent/pre-step；本集成夹具只验证工具链，
+    // 因此提供空的事件注册能力即可。
+    on: () => () => {},
     emit: (name, payload) => events.push({ name, payload }),
   }
 
@@ -138,7 +141,7 @@ async function happyScenario() {
   if (realtime.status !== 'completed') {
     throw new Error(`realtime task did not complete: ${JSON.stringify(realtime)}`)
   }
-  if (!String(realtime.message).includes('✅ 完成')) {
+  if (!String(realtime.message).includes('任务已完成')) {
     throw new Error(`realtime message missing completion badge: ${realtime.message}`)
   }
   if (!String(realtime.content_preview).includes('集成测试回复')) {
@@ -167,8 +170,9 @@ async function happyScenario() {
 
   const report = registered.find((definition) => definition.name === 'offpeak_report')
   const reportResult = await report.execute({ period: 'day' }, exec)
-  if (reportResult.executions < 1) {
-    throw new Error(`report executions < 1: ${JSON.stringify(reportResult)}`)
+  // 账单只统计真正错峰（priority 1/2）的执行；上面的 realtime 用例不能计入。
+  if (reportResult.executions !== 0 || reportResult.pending_tasks !== 1) {
+    throw new Error(`report did not preserve the expected realtime/queued split: ${JSON.stringify(reportResult)}`)
   }
   if (!String(reportResult.text).includes('错峰省钱账单')) {
     throw new Error('report text missing header')
@@ -213,6 +217,7 @@ async function guardScenario() {
       {
         tools: { register: () => () => {} },
         effect: (fn) => fn(),
+        on: () => () => {},
         emit: () => {},
       },
       { api_key: 'x' },

@@ -49,6 +49,16 @@ body[data-ds-dark-theme] .iconImg:not(.iconDark) {
   display: none;
 }
 
+.phaseIcon {
+  width: 16px;
+  height: 16px;
+  margin-left: auto;
+  object-fit: contain;
+  flex: none;
+  user-select: none;
+  pointer-events: none;
+}
+
 .entryCollapsed {
   justify-content: center;
   width: 36px;
@@ -71,8 +81,8 @@ body[data-ds-dark-theme] .iconImg:not(.iconDark) {
 .overlayPanel {
   width: min(400px, 92vw);
   height: 100%;
-  background: var(--dsh-bg, #0d1117);
-  border-left: 1px solid var(--dsh-border, #30363d);
+  background: var(--dsw-alias-bg-base, #ffffff);
+  border-left: 1px solid var(--dsw-alias-border-l2, #d0d7de);
   box-shadow: -12px 0 36px rgba(0, 0, 0, 0.45);
   display: flex;
   flex-direction: column;
@@ -89,7 +99,7 @@ body[data-ds-dark-theme] .iconImg:not(.iconDark) {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--dsh-border, #30363d);
+  border-bottom: 1px solid var(--dsw-alias-border-l2, #d0d7de);
   flex: none;
 }
 
@@ -103,7 +113,7 @@ body[data-ds-dark-theme] .iconImg:not(.iconDark) {
   margin-left: auto;
   border: none;
   background: transparent;
-  color: var(--dsh-fg-muted, #8b949e);
+  color: var(--dsw-alias-label-secondary, #656d76);
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
@@ -113,7 +123,7 @@ body[data-ds-dark-theme] .iconImg:not(.iconDark) {
 
 .close:hover {
   background: var(--dsw-alias-interactive-bg-hover, #21262d);
-  color: var(--dsh-fg, #e6edf3);
+  color: var(--dsw-alias-label-primary, #1f2328);
 }
 
 .overlayBody {

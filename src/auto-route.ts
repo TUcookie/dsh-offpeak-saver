@@ -4,12 +4,14 @@
  * - 可延后任务 + 错峰时段 → 自动交给调度器立即执行（半价 + 完整计费统计）
  * - 交互式 / 紧急 / 问答 → 放行，模型正常处理
  *
- * 通过 dsh 的 agent/pre-step waterfall 拦截实现：命中时改写进入模型的
- * 消息（enter），而不是 reject + 注入 followup（后者会把回合卡成 blocked）。
+ * 通过 dsh 的 agent/pre-step waterfall 拦截实现：命中时直接写入会话记录，
+ * 再以空消息完成本轮，不把调度控制语传给模型。
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { randomUUID } from 'node:crypto'
 import type { OffPeakSaver } from './core.js'
+import type { SessionRunner } from './session-runner.js'
 
 declare module '@deepseek-ai/cordis' {
   interface Events {
@@ -21,14 +23,19 @@ declare module '@deepseek-ai/cordis' {
           id: string
           session?: {
             header?: { cwd?: string }
+            append?: (type: string, data: unknown, options?: unknown) => unknown
           }
           followup(message: { role: string; content: Array<{ type: string; text: string }>; source: Record<string, unknown> }): void
+          whenIdle(): Promise<void>
+          cancel(cause: { kind: 'user' }): void
         }
         messages: Array<{
           role?: string
           content?: Array<{ type?: string; text?: string }>
           source?: { kind?: string; plugin?: string }
         }>
+        turn: number
+        step: number
       },
       next: () => Promise<unknown>,
     ): Promise<unknown>
@@ -79,9 +86,57 @@ function extractText(message: { content?: Array<{ type?: string; text?: string }
 }
 
 /**
+ * 直接把“已排队”写进会话记录，并让本轮以空步骤正常结束。
+ *
+ * 不能把这类控制文案伪装成第二条 user 消息交给模型：模型会把它当作
+ * 不可信提示词来审视，既浪费 tokens，也可能把审视过程流式展示给用户。
+ * 这里保留用户原话，再写入一个由调度器生成的 assistant 消息；模型完全
+ * 不参与这次确认。到错峰时间后，SessionRunner 才会把原任务作为新消息
+ * 唤醒到同一会话里执行。
+ */
+function recordSchedulerReply(
+  agent: {
+    session?: {
+      append?: (type: string, data: unknown, options?: unknown) => unknown
+    }
+  },
+  userMessage: {
+    role?: string
+    content?: Array<{ type?: string; text?: string }>
+    source?: { kind?: string; plugin?: string }
+  },
+  reply: string,
+  turn: number,
+  step: number,
+): boolean {
+  const session = agent.session
+  if (typeof session?.append !== 'function') return false
+
+  session.append('user/message', userMessage, { surfaceOp: 'append' })
+  session.append('assistant/message', {
+    turn,
+    step,
+    message: {
+      id: randomUUID(),
+      role: 'assistant',
+      content: [{ type: 'text', text: reply }],
+      source: {
+        kind: 'model',
+        provider: 'dsh-offpeak-saver',
+        model: 'scheduler',
+      },
+    },
+  }, {
+    surfaceOp: 'append',
+    sourceEventSeqs: [],
+  })
+  return true
+}
+
+/**
  * 安装自动分流。返回清理函数（在插件 effect 中调用）。
  */
-export function installAutoRouting(ctx: Context, saver: OffPeakSaver): () => void {
+export function installAutoRouting(ctx: Context, saver: OffPeakSaver, sessionRunner?: SessionRunner): () => void {
   // sessionId -> 最近一次自动排队（或已启动）的任务 id
   const autoQueued = new Map<string, string>()
 
@@ -89,7 +144,10 @@ export function installAutoRouting(ctx: Context, saver: OffPeakSaver): () => voi
       payload: {
         agent: {
           id: string
-          session?: { header?: { cwd?: string } }
+          session?: {
+            header?: { cwd?: string }
+            append?: (type: string, data: unknown, options?: unknown) => unknown
+          }
           followup(message: { role: string; content: Array<{ type: string; text: string }>; source: Record<string, unknown> }): void
         }
         messages: Array<{
@@ -97,6 +155,8 @@ export function installAutoRouting(ctx: Context, saver: OffPeakSaver): () => voi
         content?: Array<{ type?: string; text?: string }>
         source?: { kind?: string; plugin?: string }
       }>
+      turn: number
+      step: number
     },
     next: () => Promise<unknown>,
   ): Promise<unknown> => {
@@ -114,8 +174,11 @@ export function installAutoRouting(ctx: Context, saver: OffPeakSaver): () => voi
       if (RUN_NOW_RE.test(text)) {
         const taskId = autoQueued.get(agentId)
         if (taskId !== undefined) {
+          const reply = '已为你立即执行该任务，完成后可在错峰省钱面板查看结果与节省金额。'
+          if (!recordSchedulerReply(payload.agent, message, reply, payload.turn, payload.step)) return next()
           autoQueued.delete(agentId)
           void saver.runTaskNow(taskId).catch(() => {})
+          return { kind: 'enter', messages: [] }
         }
         return next()
       }
@@ -124,8 +187,11 @@ export function installAutoRouting(ctx: Context, saver: OffPeakSaver): () => voi
       if (CANCEL_RE.test(text)) {
         const taskId = autoQueued.get(agentId)
         if (taskId !== undefined) {
+          const reply = '已取消排队任务。'
+          if (!recordSchedulerReply(payload.agent, message, reply, payload.turn, payload.step)) return next()
           autoQueued.delete(agentId)
           saver.cancelTask(taskId)
+          return { kind: 'enter', messages: [] }
         }
         return next()
       }
@@ -141,19 +207,28 @@ export function installAutoRouting(ctx: Context, saver: OffPeakSaver): () => voi
         return await next()
       }
 
-      // 高峰时段：排队到错峰（半价）。极简提示 + 原任务文本。
+      // 高峰时段：排队到错峰（半价）。确认由插件直接写入会话，不请求模型。
       const priority = 1
-      const task = saver.createQueuedTask({ prompt: text, cwd }, priority)
+      // 方案 B：记住任务属于哪个会话；并把 live agent 注册进执行器，
+      // 错峰到点后直接在原对话唤醒执行（而不是另开独立会话）。
+      // 先确认运行时能写入 Session，再入队；否则让原会话照常处理，绝不产生
+      // 一个用户看不到确认、也无法“现在做/取消”的隐藏任务。
+      if (typeof payload.agent.session?.append !== 'function') return next()
+
+      const task = saver.createQueuedTask({ prompt: text, cwd, session_id: agentId }, priority)
+      sessionRunner?.registerAgent?.(payload.agent as Parameters<NonNullable<SessionRunner['registerAgent']>>[0])
       autoQueued.set(agentId, task.id)
       const nextOff = saver.nextOffPeak()
-      const notice = `[错峰省钱] 已为你排队到错峰时段执行（${nextOff?.label ?? '下一空闲时段'}，半价）。如需现在执行，回复“现在做”。`
-      const rewritten = {
-        ...message,
-        content: [
-          { type: 'text', text: `${notice}\n\n${text}` },
-        ],
+      const label = nextOff?.label ?? '下一空闲时段'
+      const reply = `现在已处于高峰时段，已为您排队到错峰时段执行（${label}，半价）。若需要立即执行，请回复“现在做”；若需要取消该任务，请回复“取消”。`
+      if (!recordSchedulerReply(payload.agent, message, reply, payload.turn, payload.step)) {
+        // 未知/不兼容运行时没有公开 Session.append 时宁可放行，不创建隐藏队列，
+        // 避免“已经排队”却不给用户任何确认。
+        saver.cancelTask(task.id)
+        autoQueued.delete(agentId)
+        return next()
       }
-      return { kind: 'enter', messages: [rewritten] }
+      return { kind: 'enter', messages: [] }
     } catch (error) {
       const logger = (ctx as unknown as { logger?: { warn?: (message: string) => void } }).logger
       logger?.warn?.(`[offpeak-saver] 自动分流失败，已放行消息：${error instanceof Error ? error.message : String(error)}`)

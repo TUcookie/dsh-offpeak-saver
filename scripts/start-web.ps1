@@ -10,8 +10,13 @@ $stdout = Join-Path $logDir "web-$Port.out.log"
 $stderr = Join-Path $logDir "web-$Port.err.log"
 Remove-Item -Force $stdout, $stderr -ErrorAction SilentlyContinue
 
-$proc = Start-Process -FilePath 'C:\Program Files\PowerShell\7\pwsh.exe' `
-  -ArgumentList '-NoProfile', '-Command', "pnpm dlx @deepseek-ai/dsh web --port $Port" `
+$dsh = (Get-Command dsh -ErrorAction Stop).Source
+if ($dsh.EndsWith('.ps1', [System.StringComparison]::OrdinalIgnoreCase)) {
+  $cmdShim = [System.IO.Path]::ChangeExtension($dsh, '.cmd')
+  if (Test-Path -LiteralPath $cmdShim) { $dsh = $cmdShim }
+}
+$proc = Start-Process -FilePath $dsh `
+  -ArgumentList 'web', '--port', "$Port" `
   -WorkingDirectory $root `
   -WindowStyle Hidden `
   -RedirectStandardOutput $stdout `

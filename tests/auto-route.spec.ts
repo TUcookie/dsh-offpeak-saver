@@ -79,14 +79,24 @@ async function dispatch(listeners: Array<{ event: string; handler: (payload: unk
   const handler = listeners.find((l) => l.event === 'agent/pre-step')
   if (handler === undefined) throw new Error('listener not installed')
   const next = vi.fn(async () => ({ kind: 'enter', messages }))
+  const appended: Array<{ type: string; data: unknown; options: unknown }> = []
   const result = await handler.handler({
     agent: {
       id: 'session-1',
-      session: { header: { cwd: 'D:\\我的文件夹\\Game_Projects(by GODOT)' } },
+      session: {
+        header: { cwd: 'D:\\我的文件夹\\Game_Projects(by GODOT)' },
+        append: (type: string, data: unknown, options: unknown) => {
+          appended.push({ type, data, options })
+        },
+      },
+      whenIdle: async () => {},
+      cancel: () => {},
     },
     messages,
+    turn: 3,
+    step: 1,
   }, next)
-  return { result, next }
+  return { result, next, appended }
 }
 
 describe('installAutoRouting', () => {
@@ -109,23 +119,26 @@ describe('installAutoRouting', () => {
     expect(next).toHaveBeenCalled()
   })
 
-  it('高峰时段：文档任务自动排队，enter 改写为极简前缀 + 原任务', async () => {
+  it('高峰时段：文档任务自动排队，调度器直接写入确认而不把控制提示交给模型', async () => {
     const { saver, created, runNow } = makeSaver('peak')
     const { ctx, listeners } = makeCtx()
     installAutoRouting(ctx, saver)
 
-    const { result } = await dispatch(listeners, [userMessage('写一份本周工作总结')])
+    const { result, next, appended } = await dispatch(listeners, [userMessage('写一份本周工作总结')])
     expect(created.length).toBe(1)
     expect(created[0].priority).toBe(1)
-    expect(created[0].input.session_id).toBeUndefined()
+    expect(created[0].input.session_id).toBe('session-1')
     expect(created[0].input.cwd).toBe('D:\\我的文件夹\\Game_Projects(by GODOT)')
     expect(runNow).toEqual([])
-    expect(result).toMatchObject({ kind: 'enter' })
-    const text = ((result as { kind: 'enter'; messages: Array<{ content: Array<{ text: string }> }> }).messages[0])
-      .content.map((b) => b.text).join('')
-    expect(text).toContain('[错峰省钱]')
-    expect(text).toContain('现在做')
-    expect(text).toContain('写一份本周工作总结') // 原任务仍被模型执行
+    expect(next).not.toHaveBeenCalled()
+    expect(result).toEqual({ kind: 'enter', messages: [] })
+    expect(appended.map((event) => event.type)).toEqual(['user/message', 'assistant/message'])
+    expect((appended[0].data as { content: Array<{ text: string }> }).content[0].text).toBe('写一份本周工作总结')
+    const reply = (appended[1].data as { message: { content: Array<{ text: string }>; source: { provider: string } } }).message
+    expect(reply.content[0].text).toContain('已为您排队到错峰时段执行')
+    expect(reply.content[0].text).toContain('现在做')
+    expect(reply.content[0].text).not.toContain('不要执行任何任务')
+    expect(reply.source.provider).toBe('dsh-offpeak-saver')
   })
 
   it('交互式任务放行，不创建任务', async () => {
@@ -148,7 +161,7 @@ describe('installAutoRouting', () => {
     expect(next).toHaveBeenCalled()
   })
 
-  it('回复“现在做”把最近排队任务提级执行并放行', async () => {
+  it('回复“现在做”提级执行，并由调度器直接确认（不请求模型）', async () => {
     const { saver, runNow } = makeSaver('peak')
     const { ctx, listeners } = makeCtx()
     installAutoRouting(ctx, saver)
@@ -158,19 +171,23 @@ describe('installAutoRouting', () => {
     expect(saver.createQueuedTask).toHaveBeenCalledTimes(1)
 
     // 用户回复“现在做”
-    const { next } = await dispatch(listeners, [userMessage('现在做')])
+    const { result, next, appended } = await dispatch(listeners, [userMessage('现在做')])
     expect(runNow).toEqual(['task-auto-1'])
-    expect(next).toHaveBeenCalled()
+    expect(next).not.toHaveBeenCalled()
+    expect(result).toEqual({ kind: 'enter', messages: [] })
+    expect((appended[1].data as { message: { content: Array<{ text: string }> } }).message.content[0].text).toContain('立即执行')
   })
 
-  it('回复“取消”撤销最近排队任务并放行', async () => {
+  it('回复“取消”撤销任务，并由调度器直接确认（不请求模型）', async () => {
     const { saver, cancelled } = makeSaver('peak')
     const { ctx, listeners } = makeCtx()
     installAutoRouting(ctx, saver)
 
     await dispatch(listeners, [userMessage('写一份本周工作总结')])
-    const { next } = await dispatch(listeners, [userMessage('取消')])
+    const { result, next, appended } = await dispatch(listeners, [userMessage('取消')])
     expect(cancelled).toEqual(['task-auto-1'])
-    expect(next).toHaveBeenCalled()
+    expect(next).not.toHaveBeenCalled()
+    expect(result).toEqual({ kind: 'enter', messages: [] })
+    expect((appended[1].data as { message: { content: Array<{ text: string }> } }).message.content[0].text).toContain('已取消排队任务')
   })
 })

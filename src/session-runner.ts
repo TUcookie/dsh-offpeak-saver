@@ -46,6 +46,21 @@ export interface SessionRunner {
     model?: string,
     onStream?: (delta: SessionStreamDelta) => void,
   ): Promise<SessionRunResult>
+  /**
+   * 在原会话（live agent）里唤醒执行：任务排队时注册的会话仍存活则直接
+   * followup 注入，用户在原对话中即可看到执行过程与结果。
+   * 返回 null 表示该会话不在注册表（已关闭/重启/删除），由调用方回退独立会话。
+   */
+  runInLiveSession?(
+    payload: TaskPayload,
+    signal: AbortSignal,
+    model?: string,
+    onStream?: (delta: SessionStreamDelta) => void,
+  ): Promise<SessionRunResult | null>
+  /** 注册一个 live agent（auto-route 在用户消息 pre-step 时调用）。 */
+  registerAgent?(agent: AgentLike): void
+  /** 注销一个 live agent（agent 销毁时调用）。 */
+  unregisterAgent?(agentId: string): void
   cancelAll(): void
 }
 
@@ -62,6 +77,8 @@ interface AgentsService {
     agentOptions?: { model?: string; maxTokens?: number }
     signal?: AbortSignal
   }): Promise<AgentHandle>
+  /** 查询 live agent 是否仍在注册表。 */
+  get?(id: string): unknown
 }
 
 /** create/resume 返回的已发布句柄。 */
@@ -123,6 +140,77 @@ export function createDshSessionRunner(ctx: unknown): SessionRunner {
   }
 
   const activeAgents = new Set<AgentLike>()
+  // 用户会话注册表：sessionId -> live Agent（方案 B：错峰到点在原对话唤醒执行）
+  const liveAgents = new Map<string, AgentLike>()
+
+  // agent 销毁时自动清理注册表，避免悬挂引用
+  const ctxAny = ctx as { on?: (event: string, handler: (payload: { agent?: { id?: string } }) => void) => void }
+  ctxAny.on?.('agent/disposed', ({ agent }) => {
+    if (agent?.id !== undefined) liveAgents.delete(String(agent.id))
+  })
+
+  /** 唤醒一个 live agent 执行任务（不 create/resume，直接 followup）。 */
+  async function wakeAgent(
+    agent: AgentLike,
+    payload: TaskPayload,
+    signal: AbortSignal,
+    model?: string,
+    onStream?: (delta: SessionStreamDelta) => void,
+  ): Promise<SessionRunResult> {
+    const cursor = agent.session.events.length
+    const abortHandler = (): void => {
+      try {
+        agent.cancel({ kind: 'user' })
+      } catch {
+        // agent 可能已收尾
+      }
+    }
+    signal.addEventListener('abort', abortHandler, { once: true })
+
+    let pollTimer: ReturnType<typeof setInterval> | null = null
+    let seenSeq = cursor
+    const pollAndEmit = (): void => {
+      const events = agent.session.events
+      if (events.length <= seenSeq) return
+      const fresh = events.slice(seenSeq)
+      seenSeq = events.length
+      if (onStream === undefined) return
+      for (const delta of extractStreamDeltas(fresh)) {
+        onStream(delta)
+      }
+    }
+    const startPolling = (): void => {
+      if (onStream === undefined) return
+      pollTimer = setInterval(pollAndEmit, 120)
+    }
+    const stopPolling = (): void => {
+      if (pollTimer !== null) {
+        clearInterval(pollTimer)
+        pollTimer = null
+      }
+    }
+
+    try {
+      agent.followup({
+        content: [{ type: 'text', text: payload.prompt }],
+        source: { kind: 'plugin', plugin: 'dsh-offpeak-saver' },
+      })
+      startPolling()
+      await agent.whenIdle()
+      stopPolling()
+      pollAndEmit()
+      if (signal.aborted) throw new CancelledSessionError()
+
+      const { content, usage } = extractSessionOutput(agent.session.events.slice(cursor))
+      if (content.trim() === '') {
+        throw new SessionOutputError('agent 会话内执行未产生回复内容')
+      }
+      return { content, usage, sessionId: agent.id }
+    } finally {
+      stopPolling()
+      signal.removeEventListener('abort', abortHandler)
+    }
+  }
 
   return {
     async runTask(
@@ -225,6 +313,37 @@ export function createDshSessionRunner(ctx: unknown): SessionRunner {
         } catch {
           // 忽略
         }
+      }
+    },
+
+    registerAgent(agent: AgentLike): void {
+      if (agent.id !== undefined) liveAgents.set(String(agent.id), agent)
+    },
+
+    unregisterAgent(agentId: string): void {
+      liveAgents.delete(agentId)
+    },
+
+    async runInLiveSession(
+      payload: TaskPayload,
+      signal: AbortSignal,
+      model?: string,
+      onStream?: (delta: SessionStreamDelta) => void,
+    ): Promise<SessionRunResult | null> {
+      if (payload.session_id === undefined || payload.session_id === '') return null
+      const agent = liveAgents.get(payload.session_id)
+      if (agent === undefined) return null
+      // 确认 agent 仍在 live registry 中（dsh agents.get 可查）
+      const stillLive = agents.get?.(String(agent.id)) !== undefined
+      if (!stillLive) {
+        liveAgents.delete(String(agent.id))
+        return null
+      }
+      activeAgents.add(agent)
+      try {
+        return await wakeAgent(agent, payload, signal, model, onStream)
+      } finally {
+        activeAgents.delete(agent)
       }
     },
   }

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { extractSessionOutput, extractStreamDeltas, SessionOutputError } from '../src/session-runner.js'
+import { describe, expect, it, vi } from 'vitest'
+import { extractSessionOutput, extractStreamDeltas, SessionOutputError, createDshSessionRunner } from '../src/session-runner.js'
 
 function assistantEvent(seq: number, text: string, usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number }) {
   return {
@@ -64,5 +64,88 @@ describe('extractStreamDeltas', () => {
       { seq: 1, type: 'assistant/chunk', data: { chunk: { type: 'text-delta', index: 0, text: '' } } },
       { seq: 2, type: 'user/message', data: {} },
     ])).toEqual([])
+  })
+})
+
+describe('方案 B：原会话唤醒执行', () => {
+  function makeFakeAgent(initialEvents: unknown[] = []) {
+    const events = [...initialEvents]
+    let idleResolvers: Array<() => void> = []
+    const agent = {
+      id: 'session-live-1',
+      session: { events },
+      followup: vi.fn(() => {
+        // 模拟 followup 后 agent 产生 assistant 消息
+        events.push(
+          { seq: events.length, type: 'assistant/message', data: {
+            message: { content: [{ type: 'text', text: '原会话产出的结果' }] },
+            usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 10 },
+          } },
+        )
+        for (const resolve of idleResolvers.splice(0)) resolve()
+      }),
+      whenIdle: vi.fn(async () => {
+        if (events.some((e) => (e as { type?: string }).type === 'assistant/message')) return
+        await new Promise<void>((resolve) => { idleResolvers.push(resolve) })
+      }),
+      cancel: vi.fn(),
+    }
+    return agent
+  }
+
+  function makeCtx(agents: { get?: () => unknown }) {
+    return {
+      get: (name: string) => name === 'agents' ? agents : undefined,
+      on: () => {},
+    }
+  }
+
+  it('注册 agent 后，runInLiveSession 在原会话 followup 唤醒并提取结果', async () => {
+    const fakeAgent = makeFakeAgent()
+    const runner = createDshSessionRunner(makeCtx({ get: () => fakeAgent }))
+    runner.registerAgent?.(fakeAgent)
+
+    const result = await runner.runInLiveSession!(
+      { prompt: '总结项目', session_id: 'session-live-1' },
+      new AbortController().signal,
+      'deepseek-v4-flash',
+    )
+
+    expect(fakeAgent.followup).toHaveBeenCalledTimes(1)
+    expect(fakeAgent.followup.mock.calls[0][0].content[0].text).toBe('总结项目')
+    expect(result).not.toBeNull()
+    expect(result!.content).toContain('原会话产出的结果')
+    expect(result!.usage).toEqual({ inputTokens: 100, outputTokens: 50, cacheReadTokens: 10 })
+    expect(result!.sessionId).toBe('session-live-1')
+  })
+
+  it('agent 不在注册表时返回 null（调用方回退独立会话）', async () => {
+    const runner = createDshSessionRunner(makeCtx({ get: () => undefined }))
+    const result = await runner.runInLiveSession!(
+      { prompt: '任务', session_id: 'session-gone' },
+      new AbortController().signal,
+    )
+    expect(result).toBeNull()
+  })
+
+  it('未指定 session_id 时返回 null', async () => {
+    const runner = createDshSessionRunner(makeCtx({ get: () => undefined }))
+    const result = await runner.runInLiveSession!(
+      { prompt: '任务' },
+      new AbortController().signal,
+    )
+    expect(result).toBeNull()
+  })
+
+  it('unregisterAgent 后不再唤醒', async () => {
+    const fakeAgent = makeFakeAgent()
+    const runner = createDshSessionRunner(makeCtx({ get: () => undefined }))
+    runner.registerAgent?.(fakeAgent)
+    runner.unregisterAgent?.('session-live-1')
+    const result = await runner.runInLiveSession!(
+      { prompt: '任务', session_id: 'session-live-1' },
+      new AbortController().signal,
+    )
+    expect(result).toBeNull()
   })
 })

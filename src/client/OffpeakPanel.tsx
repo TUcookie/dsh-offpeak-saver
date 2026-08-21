@@ -6,6 +6,7 @@ import {
   formatClock,
   loadOverview,
   money,
+  setMaxConcurrency,
   type PanelOverview,
   type PanelTask,
 } from './api.ts'
@@ -147,6 +148,7 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [cancelling, setCancelling] = useState<Set<string>>(new Set())
+  const [updatingConcurrency, setUpdatingConcurrency] = useState(false)
   const [nowTick, setNowTick] = useState(() => Date.now())
   const [streamTexts, setStreamTexts] = useState<Record<string, TaskStreamText>>({})
 
@@ -177,6 +179,19 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
       })
     }
   }, [load])
+
+  const updateConcurrency = useMemo(() => async (maxConcurrency: number): Promise<void> => {
+    if (state === null || maxConcurrency === state.concurrency.configured) return
+    setUpdatingConcurrency(true)
+    try {
+      const concurrency = await setMaxConcurrency(maxConcurrency)
+      setState((previous) => previous === null ? null : { ...previous, concurrency })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setUpdatingConcurrency(false)
+    }
+  }, [state])
 
   useEffect(() => {
     void load()
@@ -261,6 +276,23 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
             {t('nextOffpeak')}: {state.nextOffPeak}
           </span>
         )}
+        <label className={css.concurrency}>
+          <span>{t('concurrency')}</span>
+          <input
+            aria-label={t('concurrency')}
+            type="range"
+            min="1"
+            max="8"
+            step="1"
+            value={state.concurrency.configured}
+            disabled={updatingConcurrency}
+            onChange={(event) => { void updateConcurrency(Number(event.target.value)) }}
+          />
+          <output className={css.concurrencyValue}>
+            {state.concurrency.effective}/{state.concurrency.configured}
+          </output>
+          {updatingConcurrency && <span className={css.muted}>{t('concurrencyUpdating')}</span>}
+        </label>
         <span className={css.spacer} />
         <button
           className={css.button}

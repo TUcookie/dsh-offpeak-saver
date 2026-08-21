@@ -163,6 +163,7 @@ describe('OffPeakSaver', () => {
     // 真正错峰任务（priority 1）入队后 drain，计入账单
     await saver.submitTask({ prompt: '任务 B' }, 1)
     await saver.runPendingNowForTest()
+    await vi.waitFor(() => expect(saver.getReport('day').executions).toBe(1))
     const report2 = saver.getReport('day')
     expect(report2.executions).toBe(1)
     expect(report2.savings).toBeCloseTo(5.71, 2)
@@ -181,6 +182,9 @@ describe('OffPeakSaver', () => {
     expect(saver.updateSetting('discount_rate', '0.3').value).toBe(0.3)
     expect(saver.currentConfig.discount_rate).toBe(0.3)
     expect(() => saver.updateSetting('peak_hours', '["09:00"]')).toThrow()
+    expect(() => saver.updateSetting('max_concurrency', '0')).toThrow('1 到 8')
+    expect(() => saver.updateSetting('max_concurrency', '9')).toThrow('1 到 8')
+    expect(() => saver.updateSetting('max_concurrency', '2.5')).toThrow('1 到 8')
     expect(() => saver.updateSetting('api_key', 'x')).toThrow()
     await saver.stop()
 
@@ -334,10 +338,60 @@ describe('OffPeakSaver', () => {
     // 空闲窗口内 submit 会同步 drain？submitTask 只入队；手动触发执行
     expect(result.task.status).toBe('pending')
     await saver.runPendingNowForTest()
+    await vi.waitFor(() => expect(saver.getTask(result.task.id)?.status).toBe('completed'))
     const view = saver.getTask(result.task.id)
     expect(view?.status).toBe('completed')
     expect(view?.savings).toBeCloseTo(5.71, 2)
     expect(readFileSync(view?.result_path!, 'utf8')).toContain('会话内执行产出的结果')
+  })
+
+  it('错峰队列在任务完成后立即补位，不等待整批全部结束', async () => {
+    const resolvers: Array<(response: Response) => void> = []
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => resolvers.push(resolve)))
+    vi.stubGlobal('fetch', fetchMock)
+    const saver = makeSaver({ peak_hours: offPeakHours(), max_concurrency: 1 })
+    await saver.submitTask({ prompt: '任务 1' }, 1)
+    await saver.submitTask({ prompt: '任务 2' }, 1)
+    await saver.submitTask({ prompt: '任务 3' }, 1)
+
+    await saver.runPendingNowForTest()
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    resolvers.shift()!(new Response(JSON.stringify(fakeCompletion('1')), { status: 200 }))
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    resolvers.shift()!(new Response(JSON.stringify(fakeCompletion('2')), { status: 200 }))
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    resolvers.shift()!(new Response(JSON.stringify(fakeCompletion('3')), { status: 200 }))
+    await vi.waitFor(() => expect(saver.listTasks().pending).toHaveLength(0))
+  })
+
+  it('session 模式把同一会话串行，并在不同会话之间公平补位', async () => {
+    vi.useFakeTimers()
+    const started: string[] = []
+    let finish!: () => void
+    const gate = new Promise<void>((resolve) => { finish = resolve })
+    const runner: SessionRunner = {
+      runTask: async (payload) => {
+        started.push(payload.prompt)
+        await gate
+        return { content: payload.prompt, usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0 }, sessionId: 'test' }
+      },
+      cancelAll: () => {},
+    }
+    const saver = makeSaver(
+      { peak_hours: offPeakHours(), execution_mode: 'session', max_concurrency: 3 },
+      { sessionRunner: runner },
+    )
+    await saver.submitTask({ prompt: 'A-1', session_id: 'session-A' }, 1)
+    await saver.submitTask({ prompt: 'A-2', session_id: 'session-A' }, 1)
+    await saver.submitTask({ prompt: 'B-1', session_id: 'session-B' }, 1)
+    await saver.runPendingNowForTest()
+    await vi.advanceTimersByTimeAsync(2_100)
+
+    expect(started).toEqual(['A-1', 'B-1'])
+    finish()
+    await vi.advanceTimersByTimeAsync(10)
+    vi.useRealTimers()
+    await vi.waitFor(() => expect(started).toContain('A-2'))
   })
 
   it('会话内执行被取消 → 任务 failed 且不再重试', async () => {

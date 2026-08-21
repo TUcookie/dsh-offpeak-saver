@@ -62,7 +62,7 @@ API Key 三种来源（优先级从高到低）：`cordis.yml` 插件配置 `api
 | `default_model` | `deepseek-v4-flash` | 默认模型 |
 | `peak_hours` | `["09:00-12:00","14:00-18:00"]` | 高峰时段（北京时间） |
 | `timezone_offset_hours` | `8` | 时区偏移 |
-| `max_concurrency` | `5` | 同时 API 请求数 |
+| `max_concurrency` | `3` | 同时 API 请求数上限（1–8，可在侧边栏滑块调整） |
 | `retry_attempts` | `3` | 指数退避重试次数 |
 | `backoff_base_ms` | `2000` | 退避基准延迟 |
 | `request_timeout_ms` | `1800000` | 单请求超时（30 分钟） |

@@ -23,6 +23,7 @@ export type CoreEvent =
   | { type: 'task-stream'; taskId: string; kind: 'text' | 'reasoning'; text: string }
   | { type: 'window-changed'; phase: 'peak' | 'offpeak'; at: string }
   | { type: 'drain-started'; count: number }
+  | { type: 'concurrency-changed'; configured: number; effective: number; reason: 'rate-limit' | 'recovered' }
   | { type: 'stale-tasks'; count: number }
 
 export interface ExecutorHooks {
@@ -59,6 +60,18 @@ export class TaskExecutor {
   private readonly semaphore: Semaphore
   private readonly inFlight = new Map<string, AbortController>()
   private readonly settling = new Set<Promise<void>>()
+  /** 已派发（含等待信号量）的错峰任务；用它计算可补位容量，避免整批等待。 */
+  private readonly scheduled = new Set<string>()
+  /** session 模式下同一原生会话只能同时跑一个任务，确保消息顺序不乱。 */
+  private readonly scheduledSessions = new Set<string>()
+  private readonly scheduledRuns = new Set<Promise<void>>()
+  private pumpTimer: NodeJS.Timeout | null = null
+  private recoveryTimer: NodeJS.Timeout | null = null
+  private rampStartedAt: number | null = null
+  private adaptiveLimit: number | null = null
+
+  private static readonly RAMP_STEP_MS = 1_000
+  private static readonly RATE_LIMIT_RECOVERY_MS = 20_000
 
   constructor(
     private readonly store: TaskStore,
@@ -66,7 +79,7 @@ export class TaskExecutor {
     private readonly getConfig: () => Config,
     private readonly hooks: ExecutorHooks = {},
   ) {
-    this.semaphore = new Semaphore(() => this.config.max_concurrency)
+    this.semaphore = new Semaphore(() => this.effectiveConcurrency)
   }
 
   private get config(): Config {
@@ -85,6 +98,15 @@ export class TaskExecutor {
     return this.hooks.isClosed?.() ?? false
   }
 
+  /** 当前实际派发上限：用户上限、启动渐进升速和限流降速三者取最小。 */
+  get effectiveConcurrency(): number {
+    const configured = this.config.max_concurrency
+    const ramp = this.rampStartedAt === null
+      ? configured
+      : Math.min(configured, 1 + Math.floor((Date.now() - this.rampStartedAt) / TaskExecutor.RAMP_STEP_MS))
+    return Math.max(1, Math.min(configured, ramp, this.adaptiveLimit ?? configured))
+  }
+
   /** 拉取一批待执行任务（空闲时段 + 未进入高峰前停止派发区间）。 */
   async drain(): Promise<number> {
     const now = new Date()
@@ -96,11 +118,90 @@ export class TaskExecutor {
       this.emit({ type: 'log', level: 'info', message: `已将 ${requeued} 个暂停任务重新加入队列` })
     }
     const pending = this.store.listPending()
-    const batch = pending.slice(0, this.config.max_concurrency)
-    if (batch.length === 0) return 0
-    this.emit({ type: 'drain-started', count: batch.length })
-    await Promise.allSettled(batch.map((task) => this.runTask(task.id)))
+    if (pending.length === 0) {
+      this.resetRampIfIdle()
+      return 0
+    }
+    if (this.rampStartedAt === null) this.rampStartedAt = Date.now()
+
+    const capacity = Math.max(0, this.effectiveConcurrency - this.scheduled.size)
+    const batch = this.pickFairTasks(pending, capacity)
+    if (batch.length > 0) {
+      this.emit({ type: 'drain-started', count: batch.length })
+      for (const task of batch) this.scheduleTask(task)
+    }
+
+    // 空闲窗口刚开始时每秒多放一个任务，避免大量积压任务瞬间把 API/会话压满。
+    if (this.scheduled.size < this.config.max_concurrency && pending.length > batch.length) {
+      this.scheduleDrain(TaskExecutor.RAMP_STEP_MS)
+    }
     return batch.length
+  }
+
+  /** 按优先级/创建时间扫描，同时跳过正在执行的同一会话，实现会话间公平补位。 */
+  private pickFairTasks(pending: TaskRow[], capacity: number): TaskRow[] {
+    if (capacity <= 0) return []
+    const selected: TaskRow[] = []
+    const reservedSessions = new Set(this.scheduledSessions)
+    for (const task of pending) {
+      if (selected.length >= capacity || this.scheduled.has(task.id)) continue
+      const sessionId = this.sessionKey(task)
+      if (sessionId !== null && reservedSessions.has(sessionId)) continue
+      selected.push(task)
+      if (sessionId !== null) reservedSessions.add(sessionId)
+    }
+    return selected
+  }
+
+  private sessionKey(task: TaskRow): string | null {
+    if (this.config.execution_mode !== 'session') return null
+    try {
+      const sessionId = parsePayload(task.payload).session_id?.trim()
+      return sessionId === undefined || sessionId === '' ? null : sessionId
+    } catch {
+      return null
+    }
+  }
+
+  private scheduleTask(task: TaskRow): void {
+    const sessionId = this.sessionKey(task)
+    this.scheduled.add(task.id)
+    if (sessionId !== null) this.scheduledSessions.add(sessionId)
+    const run = this.runTask(task.id)
+      .catch((error: unknown) => {
+        this.emit({
+          type: 'log',
+          level: 'error',
+          message: `任务 ${task.id} 调度异常：${error instanceof Error ? error.message : String(error)}`,
+        })
+      })
+      .finally(() => {
+        this.scheduled.delete(task.id)
+        if (sessionId !== null) this.scheduledSessions.delete(sessionId)
+        this.scheduledRuns.delete(run)
+        this.resetRampIfIdle()
+        this.scheduleDrain()
+      })
+    this.scheduledRuns.add(run)
+  }
+
+  private scheduleDrain(delay = 0): void {
+    if (this.closed) return
+    if (this.pumpTimer !== null) {
+      if (delay > 0) return
+      clearTimeout(this.pumpTimer)
+      this.pumpTimer = null
+    }
+    this.pumpTimer = setTimeout(() => {
+      this.pumpTimer = null
+      void this.drain()
+    }, delay)
+  }
+
+  private resetRampIfIdle(): void {
+    if (this.scheduled.size === 0 && this.store.countPending() === 0) {
+      this.rampStartedAt = null
+    }
   }
 
   /** 执行单个任务：原子认领；非实时任务在高峰/高峰前停止派发区间内不认领。 */
@@ -147,8 +248,17 @@ export class TaskExecutor {
 
   /** 停止时中止所有在途请求并等待收尾。 */
   async abortAllAndSettle(): Promise<void> {
+    this.stopScheduling()
     for (const controller of this.inFlight.values()) controller.abort()
-    await Promise.allSettled([...this.settling])
+    await Promise.allSettled([...this.scheduledRuns, ...this.settling])
+  }
+
+  /** 停止后台补位/恢复定时器；核心关闭时调用。 */
+  stopScheduling(): void {
+    if (this.pumpTimer !== null) clearTimeout(this.pumpTimer)
+    if (this.recoveryTimer !== null) clearTimeout(this.recoveryTimer)
+    this.pumpTimer = null
+    this.recoveryTimer = null
   }
 
   private async executeWithRetries(task: TaskRow, signal: AbortSignal): Promise<void> {
@@ -211,6 +321,7 @@ export class TaskExecutor {
           return
         }
         if (error instanceof ApiError) {
+          if (error.status === 429) this.onRateLimited()
           const retryable = error.retryable
           const message = error.message
           const maxRetries = this.config.retry_attempts
@@ -239,6 +350,38 @@ export class TaskExecutor {
         return
       }
     }
+  }
+
+  /** 429 时立即降一档；连续 20 秒未再限流则逐级恢复至用户设置。 */
+  private onRateLimited(): void {
+    const previous = this.effectiveConcurrency
+    this.adaptiveLimit = Math.max(1, previous - 1)
+    this.emit({
+      type: 'concurrency-changed',
+      configured: this.config.max_concurrency,
+      effective: this.effectiveConcurrency,
+      reason: 'rate-limit',
+    })
+    if (this.recoveryTimer !== null) clearTimeout(this.recoveryTimer)
+    this.recoveryTimer = setTimeout(() => this.recoverConcurrency(), TaskExecutor.RATE_LIMIT_RECOVERY_MS)
+  }
+
+  private recoverConcurrency(): void {
+    this.recoveryTimer = null
+    const current = this.adaptiveLimit ?? this.config.max_concurrency
+    if (current >= this.config.max_concurrency) {
+      this.adaptiveLimit = null
+      return
+    }
+    this.adaptiveLimit = current + 1
+    this.emit({
+      type: 'concurrency-changed',
+      configured: this.config.max_concurrency,
+      effective: this.effectiveConcurrency,
+      reason: 'recovered',
+    })
+    this.scheduleDrain()
+    this.recoveryTimer = setTimeout(() => this.recoverConcurrency(), TaskExecutor.RATE_LIMIT_RECOVERY_MS)
   }
 
   private async runDirect(

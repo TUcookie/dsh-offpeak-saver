@@ -91,6 +91,7 @@ export class OffPeakSaver {
   private readonly executor: TaskExecutor
   private windows: PeakWindow[]
   private timer: NodeJS.Timeout | null = null
+  private windowWakeTimer: NodeJS.Timeout | null = null
   private lastPhase: 'peak' | 'offpeak' | null = null
   private draining = false
   private closed = false
@@ -150,6 +151,7 @@ export class OffPeakSaver {
     this.recoverCrashedTasks()
     this.timer = setInterval(() => this.tick(), this.config.check_interval_ms)
     this.tick()
+    this.scheduleNextOffPeakWake()
     this.staleCheck()
   }
 
@@ -161,6 +163,10 @@ export class OffPeakSaver {
       clearInterval(this.timer)
       this.timer = null
     }
+    if (this.windowWakeTimer !== null) {
+      clearTimeout(this.windowWakeTimer)
+      this.windowWakeTimer = null
+    }
     await this.executor.abortAllAndSettle()
     this.store.close()
     this.db.close()
@@ -168,6 +174,11 @@ export class OffPeakSaver {
 
   get currentConfig(): Config {
     return this.config
+  }
+
+  /** 面板展示：用户设置上限与调度器当前实际派发上限。 */
+  getConcurrency(): { configured: number; effective: number } {
+    return { configured: this.config.max_concurrency, effective: this.executor.effectiveConcurrency }
   }
 
   /** 提交任务。priority 0 = 立即执行，1 = 错峰，2 = 后台错峰。 */
@@ -301,6 +312,9 @@ export class OffPeakSaver {
       clearInterval(this.timer)
       this.timer = setInterval(() => this.tick(), this.config.check_interval_ms)
     }
+    if (key === 'peak_hours' || key === 'timezone_offset_hours' || key === 'stop_before_peak_minutes') {
+      this.scheduleNextOffPeakWake()
+    }
     saveOverrides(this.config, patch)
     this.store.setConfig(key, JSON.stringify(value))
     this.emit({ type: 'log', level: 'info', message: `配置已热更新：${key} = ${JSON.stringify(value)}` })
@@ -347,6 +361,23 @@ export class OffPeakSaver {
         this.draining = false
       })
     }
+    this.scheduleNextOffPeakWake()
+  }
+
+  /** 高峰结束点精确唤醒，不必等最长 30 秒的常规轮询。 */
+  private scheduleNextOffPeakWake(): void {
+    if (this.closed) return
+    if (this.windowWakeTimer !== null) {
+      clearTimeout(this.windowWakeTimer)
+      this.windowWakeTimer = null
+    }
+    const next = nextOffPeakStart(new Date(), this.windows, this.config.timezone_offset_hours)
+    if (next === null) return
+    const delay = Math.max(0, next.at.getTime() - Date.now() + 50)
+    this.windowWakeTimer = setTimeout(() => {
+      this.windowWakeTimer = null
+      this.tick()
+    }, delay)
   }
 
   private staleCheck(): void {

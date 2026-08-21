@@ -59,6 +59,9 @@ export interface Config {
 
 /** 官方峰谷定价（2026-08-17 起生效）：高峰 09:00-12:00、14:00-18:00（北京时间）。 */
 export const OFFICIAL_PEAK_HOURS = ['09:00-12:00', '14:00-18:00']
+export const MIN_CONCURRENCY = 1
+export const MAX_CONCURRENCY = 8
+export const DEFAULT_MAX_CONCURRENCY = 3
 
 export const DEFAULT_PRICING: Record<string, PricingEntry> = {
   'deepseek-v4-flash': { input: 3.0, input_cache_hit: 0.1, output: 9.0 },
@@ -71,7 +74,7 @@ export const DEFAULT_CONFIG: Config = {
   default_model: 'deepseek-v4-flash',
   peak_hours: [...OFFICIAL_PEAK_HOURS],
   timezone_offset_hours: 8,
-  max_concurrency: 5,
+  max_concurrency: DEFAULT_MAX_CONCURRENCY,
   retry_attempts: 3,
   backoff_base_ms: 2000,
   request_timeout_ms: 1_800_000,
@@ -91,6 +94,9 @@ export const DEFAULT_CONFIG: Config = {
 export function mergeConfig(pluginConfig: Partial<Config>): Config {
   if (pluginConfig.base_url !== undefined && pluginConfig.base_url !== '' && !/^https:\/\//i.test(pluginConfig.base_url)) {
     throw new Error('offpeak-saver: base_url 只允许 https:// 地址（防止 API Key 外发）')
+  }
+  if (pluginConfig.max_concurrency !== undefined) {
+    validateMaxConcurrency(pluginConfig.max_concurrency)
   }
   return {
     ...DEFAULT_CONFIG,
@@ -225,7 +231,6 @@ export function sanitizeHotValue(key: string, rawValue: string): unknown {
       return parsed
     }
     case 'timezone_offset_hours':
-    case 'max_concurrency':
     case 'retry_attempts':
     case 'backoff_base_ms':
     case 'request_timeout_ms':
@@ -248,8 +253,20 @@ export function sanitizeHotValue(key: string, rawValue: string): unknown {
       if (typeof parsed !== 'string' || parsed.trim() === '') throw new Error('offpeak-saver: default_model 必须是非空字符串')
       return parsed
     }
+    case 'max_concurrency': {
+      const n = Number(parsed)
+      validateMaxConcurrency(n)
+      return n
+    }
     default:
       throw new Error(`offpeak-saver: 不允许热更新配置项 "${key}"`)
+  }
+}
+
+/** 用户可配置并发范围：避免把 API 或本地会话同时压垮。 */
+export function validateMaxConcurrency(value: number): void {
+  if (!Number.isInteger(value) || value < MIN_CONCURRENCY || value > MAX_CONCURRENCY) {
+    throw new Error(`offpeak-saver: max_concurrency 必须是 ${MIN_CONCURRENCY} 到 ${MAX_CONCURRENCY} 的整数`)
   }
 }
 

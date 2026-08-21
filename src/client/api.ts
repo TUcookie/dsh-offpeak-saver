@@ -41,6 +41,10 @@ export interface PanelOverview {
   now: string
   phase: 'peak' | 'offpeak'
   nextOffPeak: string | null
+  concurrency: {
+    configured: number
+    effective: number
+  }
   pending: PanelTask[]
   running: PanelTask[]
   recent: PanelTask[]
@@ -83,6 +87,13 @@ export function cancelTask(taskId: string): Promise<{ id: string; status: string
   return request<{ id: string; status: string }>('/offpeak-saver/cancel', {
     method: 'POST',
     body: JSON.stringify({ taskId }),
+  })
+}
+
+export function setMaxConcurrency(maxConcurrency: number): Promise<PanelOverview['concurrency']> {
+  return request<PanelOverview['concurrency']>('/offpeak-saver/concurrency', {
+    method: 'POST',
+    body: JSON.stringify({ maxConcurrency }),
   })
 }
 

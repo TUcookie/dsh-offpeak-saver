@@ -148,6 +148,14 @@ describe('dsh 工具', () => {
     )
     expect(String(set.message)).toContain('已热更新')
     expect(saver.currentConfig.max_concurrency).toBe(3)
+    const invalidLow = await tool(tools, 'offpeak_settings').execute(
+      { action: 'set', key: 'max_concurrency', value: '0' }, exec,
+    )
+    expect(String(invalidLow.message)).toContain('1 到 8')
+    const invalidFraction = await tool(tools, 'offpeak_settings').execute(
+      { action: 'set', key: 'max_concurrency', value: '8.5' }, exec,
+    )
+    expect(String(invalidFraction.message)).toContain('1 到 8')
   })
 
   it('offpeak_settings 输出不含明文 API Key（P0 安全）', async () => {

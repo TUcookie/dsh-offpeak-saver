@@ -18,7 +18,7 @@ function overview(phase: PanelOverview['phase']): PanelOverview {
     cost_actual: 0, cost_baseline: 0, savings: 0, equivalent_free_tokens: 0,
     currency: 'CNY' as const,
   }
-  return { now: '2026-08-21T00:00:00.000Z', phase, nextOffPeak: null, pending: [], running: [], recent: [], reports: { day: report, week: { ...report, period: 'week' }, month: { ...report, period: 'month' } } }
+  return { now: '2026-08-21T00:00:00.000Z', phase, nextOffPeak: null, concurrency: { configured: 3, effective: 3 }, pending: [], running: [], recent: [], reports: { day: report, week: { ...report, period: 'week' }, month: { ...report, period: 'month' } } }
 }
 
 describe('SidebarEntry 时段图标', () => {

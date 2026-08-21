@@ -12,6 +12,10 @@ interface PanelOverview {
   now: string
   phase: 'peak' | 'offpeak'
   nextOffPeak: string | null
+  concurrency: {
+    configured: number
+    effective: number
+  }
   pending: unknown[]
   running: unknown[]
   recent: unknown[]
@@ -117,6 +121,7 @@ export function registerPanelHttp(ctx: Context, saver: OffPeakSaver, server: Web
           now: now.toISOString(),
           phase: saver.currentPhase(),
           nextOffPeak: saver.nextOffPeak()?.label ?? null,
+          concurrency: saver.getConcurrency(),
           pending,
           running,
           recent,
@@ -143,6 +148,18 @@ export function registerPanelHttp(ctx: Context, saver: OffPeakSaver, server: Web
           return
         }
         send(res, 200, { ok: true, value: { id, status: task.status } })
+        return
+      }
+
+      if (method === 'POST' && route === '/offpeak-saver/concurrency') {
+        const body = await readJson(req)
+        const maxConcurrency = body.maxConcurrency
+        if (!Number.isInteger(maxConcurrency)) {
+          send(res, 400, { ok: false, error: 'maxConcurrency 必须是整数' })
+          return
+        }
+        saver.updateSetting('max_concurrency', JSON.stringify(maxConcurrency))
+        send(res, 200, { ok: true, value: saver.getConcurrency() })
         return
       }
 

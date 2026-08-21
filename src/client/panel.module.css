@@ -45,6 +45,26 @@
   flex: 1;
 }
 
+.concurrency {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--dsw-alias-label-secondary, #656d76);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.concurrency input {
+  width: 78px;
+  accent-color: var(--dsw-static-green-500, #2da44e);
+}
+
+.concurrencyValue {
+  min-width: 22px;
+  color: var(--dsw-alias-label-primary, #1f2328);
+  font-variant-numeric: tabular-nums;
+}
+
 .button {
   border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
   border-radius: 6px;

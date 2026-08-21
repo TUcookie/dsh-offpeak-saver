@@ -11,7 +11,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { createRequire } from 'node:module'
-import { DEFAULT_PRICING, OFFICIAL_PEAK_HOURS, type Config as RuntimeConfig, type PricingEntry } from './config.js'
+import { DEFAULT_MAX_CONCURRENCY, DEFAULT_PRICING, OFFICIAL_PEAK_HOURS, type Config as RuntimeConfig, type PricingEntry } from './config.js'
 import { OffPeakSaver } from './core.js'
 import { registerPanelHttpWhenReady } from './http.js'
 import { createDshSessionRunner } from './session-runner.js'
@@ -67,7 +67,7 @@ export const Config: Schema<Config> = Schema.object({
   execution_mode: Schema.union(['session', 'direct']).default('session'),
   peak_hours: Schema.array(Schema.string()).default([...OFFICIAL_PEAK_HOURS]),
   timezone_offset_hours: Schema.number().default(8),
-  max_concurrency: Schema.number().default(5),
+  max_concurrency: Schema.number().default(DEFAULT_MAX_CONCURRENCY),
   retry_attempts: Schema.number().default(3),
   backoff_base_ms: Schema.number().default(2000),
   request_timeout_ms: Schema.number().default(1_800_000),

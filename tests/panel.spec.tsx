@@ -60,6 +60,7 @@ function fakeOverview(): PanelOverview {
     now: '2026-08-18T12:00:00.000Z',
     phase: 'offpeak',
     nextOffPeak: null,
+    concurrency: { configured: 3, effective: 2 },
     pending: [
       {
         id: 'task-pending-1',
@@ -158,6 +159,29 @@ describe('OffpeakPanel 渲染', () => {
     await waitFor(() => expect(screen.getByText('批量摘要')).toBeTruthy())
     screen.getByText('取消').click()
     await waitFor(() => expect(cancelled).toBe(true))
+  })
+
+  it('并发滑块提交 1–8 范围内的新上限', async () => {
+    stubEventSource()
+    let submitted: unknown = null
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/concurrency')) {
+        submitted = JSON.parse(String(init?.body))
+        return new Response(JSON.stringify({ ok: true, value: { configured: 5, effective: 2 } }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ ok: true, value: fakeOverview() }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    render(<OffpeakPanel t={(key) => zh[key]} />)
+    const slider = await screen.findByLabelText('并发上限')
+    expect(slider.getAttribute('min')).toBe('1')
+    expect(slider.getAttribute('max')).toBe('8')
+    fireEvent.change(slider, { target: { value: '5' } })
+    await waitFor(() => expect(submitted).toEqual({ maxConcurrency: 5 }))
   })
 
   it('正在执行的任务实时展示：标题、开始时间、时长与取消按钮', async () => {

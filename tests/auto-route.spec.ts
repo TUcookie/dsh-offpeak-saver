@@ -140,7 +140,7 @@ describe('installAutoRouting', () => {
     expect(appended.map((event) => event.type)).toEqual(['user/message', 'assistant/message'])
     expect((appended[0].data as { content: Array<{ text: string }> }).content[0].text).toBe('写一份本周工作总结')
     const reply = (appended[1].data as { message: { content: Array<{ text: string }>; source: { provider: string } } }).message
-    expect(reply.content[0].text).toBe('当前是高峰时段，已帮您安排到今日 18:00错峰执行（享半价折扣）。\n队列第 3 位（共 5 项），可在仪表盘调整顺序。\n如需立即处理，请回复“现在做”；如需取消，请回复“取消”。')
+    expect(reply.content[0].text).toBe('当前是高峰时段，已帮您安排到今日 18:00错峰执行（享半价折扣）。\n\n队列第 3 位（共 5 项），可在仪表盘调整顺序。\n\n如需立即处理，请回复“现在做”；如需取消，请回复“取消”。')
     expect(reply.content[0].text).not.toContain('不要执行任何任务')
     expect(reply.source.provider).toBe('dsh-offpeak-saver')
   })

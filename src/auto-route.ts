@@ -246,8 +246,8 @@ export function installAutoRouting(ctx: Context, saver: OffPeakSaver, sessionRun
       const position = saver.getQueuePosition(task.id)
       const queueHint = position === null
         ? ''
-        : `\n队列第 ${position.position} 位（共 ${position.total} 项），可在仪表盘调整顺序。`
-      const reply = `当前是高峰时段，已帮您安排到${label}错峰执行（享半价折扣）。${queueHint}\n如需立即处理，请回复“现在做”；如需取消，请回复“取消”。`
+        : `\n\n队列第 ${position.position} 位（共 ${position.total} 项），可在仪表盘调整顺序。`
+      const reply = `当前是高峰时段，已帮您安排到${label}错峰执行（享半价折扣）。${queueHint}\n\n如需立即处理，请回复“现在做”；如需取消，请回复“取消”。`
       if (!recordSchedulerReply(payload.agent, message, reply, payload.turn, payload.step)) {
         // 未知/不兼容运行时没有公开 Session.append 时宁可放行，不创建隐藏队列，
         // 避免“已经排队”却不给用户任何确认。

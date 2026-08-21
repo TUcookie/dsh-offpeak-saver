@@ -134,6 +134,25 @@ function recordSchedulerReply(
 }
 
 /**
+ * 当前 pre-step 仍在运行时，不能立刻对同一个 agent followup：Harness 此时
+ * 的 whenIdle 可能把这条尚未收尾的确认回合当作完成，导致执行器读不到
+ * 新的 assistant 消息。延迟到本轮回调返回后，再等待 agent 确实 idle。
+ */
+function runTaskAfterConfirmation(
+  agent: { whenIdle?: () => Promise<void> },
+  saver: OffPeakSaver,
+  taskId: string,
+  onError: (error: unknown) => void,
+): void {
+  setTimeout(() => {
+    void (async () => {
+      await agent.whenIdle?.()
+      await saver.runTaskNow(taskId)
+    })().catch(onError)
+  }, 0)
+}
+
+/**
  * 安装自动分流。返回清理函数（在插件 effect 中调用）。
  */
 export function installAutoRouting(ctx: Context, saver: OffPeakSaver, sessionRunner?: SessionRunner): () => void {
@@ -149,6 +168,7 @@ export function installAutoRouting(ctx: Context, saver: OffPeakSaver, sessionRun
             append?: (type: string, data: unknown, options?: unknown) => unknown
           }
           followup(message: { role: string; content: Array<{ type: string; text: string }>; source: Record<string, unknown> }): void
+          whenIdle(): Promise<void>
         }
         messages: Array<{
         role?: string
@@ -174,10 +194,13 @@ export function installAutoRouting(ctx: Context, saver: OffPeakSaver, sessionRun
       if (RUN_NOW_RE.test(text)) {
         const taskId = autoQueued.get(agentId)
         if (taskId !== undefined) {
-          const reply = '已为你立即执行该任务，完成后可在错峰省钱面板查看结果与节省金额。'
+          const reply = '正在为你立即执行该任务。执行过程会显示在当前会话，完成后可在错峰省钱面板查看结果与节省金额。'
           if (!recordSchedulerReply(payload.agent, message, reply, payload.turn, payload.step)) return next()
           autoQueued.delete(agentId)
-          void saver.runTaskNow(taskId).catch(() => {})
+          runTaskAfterConfirmation(payload.agent, saver, taskId, (error) => {
+            const logger = (ctx as unknown as { logger?: { warn?: (message: string) => void } }).logger
+            logger?.warn?.(`[offpeak-saver] 立即执行任务 ${taskId} 失败：${error instanceof Error ? error.message : String(error)}`)
+          })
           return { kind: 'enter', messages: [] }
         }
         return next()

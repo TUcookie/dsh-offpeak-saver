@@ -75,6 +75,10 @@ function pluginMessage(text: string) {
   }
 }
 
+function waitForScheduledWork(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 5))
+}
+
 async function dispatch(listeners: Array<{ event: string; handler: (payload: unknown, next: () => Promise<unknown>) => Promise<unknown> }>, messages: unknown[]) {
   const handler = listeners.find((l) => l.event === 'agent/pre-step')
   if (handler === undefined) throw new Error('listener not installed')
@@ -161,7 +165,7 @@ describe('installAutoRouting', () => {
     expect(next).toHaveBeenCalled()
   })
 
-  it('回复“现在做”提级执行，并由调度器直接确认（不请求模型）', async () => {
+  it('回复“现在做”先结束确认回合，再提级执行，避免与当前 pre-step 竞争', async () => {
     const { saver, runNow } = makeSaver('peak')
     const { ctx, listeners } = makeCtx()
     installAutoRouting(ctx, saver)
@@ -172,10 +176,13 @@ describe('installAutoRouting', () => {
 
     // 用户回复“现在做”
     const { result, next, appended } = await dispatch(listeners, [userMessage('现在做')])
-    expect(runNow).toEqual(['task-auto-1'])
+    // 执行不能在当前 pre-step 内抢跑，否则 agent 还没真正 idle。
+    expect(runNow).toEqual([])
     expect(next).not.toHaveBeenCalled()
     expect(result).toEqual({ kind: 'enter', messages: [] })
-    expect((appended[1].data as { message: { content: Array<{ text: string }> } }).message.content[0].text).toContain('立即执行')
+    expect((appended[1].data as { message: { content: Array<{ text: string }> } }).message.content[0].text).toContain('正在为你立即执行')
+    await waitForScheduledWork()
+    expect(runNow).toEqual(['task-auto-1'])
   })
 
   it('回复“取消”撤销任务，并由调度器直接确认（不请求模型）', async () => {

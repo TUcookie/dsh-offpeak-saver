@@ -289,6 +289,34 @@ export class OffPeakSaver {
     return task
   }
 
+  /**
+   * 会话被归档/移除时，取消仍在等待的关联任务。
+   * 已经 running 的任务不受影响，避免用户归档时意外中断已开始的工作。
+   */
+  cancelQueuedTasksForSession(sessionId: string): number {
+    if (sessionId.trim() === '') return 0
+    const candidates = [...this.store.listPending(), ...this.store.listByStatus('paused')]
+    let cancelledCount = 0
+    for (const task of candidates) {
+      let payload: TaskPayload
+      try {
+        payload = parsePayload(task.payload)
+      } catch {
+        continue
+      }
+      if (payload.session_id !== sessionId) continue
+      const cancelled = this.store.cancel(task.id)
+      if (cancelled !== null && cancelled.status === 'cancelled') {
+        cancelledCount++
+        this.emit({ type: 'task-cancelled', task: cancelled })
+      }
+    }
+    if (cancelledCount > 0) {
+      this.emit({ type: 'log', level: 'info', message: `会话 ${sessionId} 已归档，自动取消 ${cancelledCount} 个排队任务` })
+    }
+    return cancelledCount
+  }
+
   retryTask(id: string): TaskRow | null {
     return this.store.retry(id)
   }

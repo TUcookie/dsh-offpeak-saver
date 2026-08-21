@@ -264,14 +264,30 @@ export function installAutoRouting(ctx: Context, saver: OffPeakSaver, sessionRun
   }
 
   // cordis 事件系统在运行时接受该 key；类型经 declare module 合并。
-  ;(ctx as unknown as {
+  const disposePreStep = (ctx as unknown as {
     on(
       event: 'agent/pre-step',
       handler: typeof listener,
     ): () => void
   }).on('agent/pre-step', listener)
 
+  // Harness 在对话归档时会让对应 session 离开 live store，并触发 session/disposed。
+  // 只取消尚未执行的关联任务；running 任务由用户显式取消才会中断。
+  const disposeSessionListener = (ctx as unknown as {
+    on(event: 'session/disposed', handler: (session: { id: string }) => void): () => void
+  }).on('session/disposed', (session) => {
+    const sessionId = String(session.id)
+    autoQueued.delete(sessionId)
+    const cancelled = saver.cancelQueuedTasksForSession(sessionId)
+    if (cancelled > 0) {
+      const logger = (ctx as unknown as { logger?: { info?: (message: string) => void } }).logger
+      logger?.info?.(`[offpeak-saver] 会话 ${sessionId} 已归档，取消 ${cancelled} 个排队任务`)
+    }
+  })
+
   return () => {
+    disposePreStep()
+    disposeSessionListener()
     autoQueued.clear()
   }
 }

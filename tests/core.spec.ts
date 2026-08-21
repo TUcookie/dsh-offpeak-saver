@@ -176,6 +176,19 @@ describe('OffPeakSaver', () => {
     expect(cancelled?.status).toBe('cancelled')
   })
 
+  it('归档会话只取消该会话仍在排队的任务，不中断 running 任务', () => {
+    const saver = makeSaver({ peak_hours: peakHours() })
+    const pendingSame = saver.createQueuedTask({ prompt: '会话 A 的排队任务', session_id: 'session-A' }, 1)
+    const pendingOther = saver.createQueuedTask({ prompt: '会话 B 的排队任务', session_id: 'session-B' }, 1)
+    const runningSame = saver.createQueuedTask({ prompt: '会话 A 的运行任务', session_id: 'session-A' }, 1)
+    saver.markTaskStartedLocally(runningSame.id)
+
+    expect(saver.cancelQueuedTasksForSession('session-A')).toBe(1)
+    expect(saver.getTask(pendingSame.id)?.status).toBe('cancelled')
+    expect(saver.getTask(pendingOther.id)?.status).toBe('pending')
+    expect(saver.getTask(runningSame.id)?.status).toBe('running')
+  })
+
   it('配置热更新校验与持久化', async () => {
     const dbPath = tmpDbPath()
     const saver = makeSaver({ db_path: dbPath })

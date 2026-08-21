@@ -34,6 +34,7 @@ function makeSaver(phase: 'peak' | 'offpeak') {
   const created: Array<{ input: SubmitInput; priority: Priority }> = []
   const runNow: string[] = []
   const cancelled: string[] = []
+  const cancelledSessions: string[] = []
   const saver = {
     currentPhase: vi.fn(() => phase),
     nextOffPeak: vi.fn(() => ({ minutes: 120, label: '今日 18:00', at: new Date() })),
@@ -44,9 +45,10 @@ function makeSaver(phase: 'peak' | 'offpeak') {
     getQueuePosition: vi.fn(() => ({ position: 3, total: 5 })),
     runTaskNow: vi.fn(async (id: string) => { runNow.push(id); return { id } }),
     cancelTask: vi.fn((id: string) => { cancelled.push(id); return { id, status: 'cancelled' } }),
+    cancelQueuedTasksForSession: vi.fn((sessionId: string) => { cancelledSessions.push(sessionId); return 1 }),
     markTaskStartedLocally: vi.fn(),
   } as unknown as OffPeakSaver
-  return { saver, created, runNow, cancelled }
+  return { saver, created, runNow, cancelled, cancelledSessions }
 }
 
 function makeCtx() {
@@ -109,6 +111,19 @@ describe('installAutoRouting', () => {
     const { ctx, listeners } = makeCtx()
     installAutoRouting(ctx, makeSaver('offpeak').saver)
     expect(listeners.some((l) => l.event === 'agent/pre-step')).toBe(true)
+    expect(listeners.some((l) => l.event === 'session/disposed')).toBe(true)
+  })
+
+  it('归档会话时取消该会话仍在排队的任务，不影响其他会话', () => {
+    const { saver, cancelledSessions } = makeSaver('peak')
+    const { ctx, listeners } = makeCtx()
+    installAutoRouting(ctx, saver)
+
+    const handler = listeners.find((listener) => listener.event === 'session/disposed')
+    expect(handler).toBeDefined()
+    ;(handler!.handler as unknown as (session: { id: string }) => void)({ id: 'session-1' })
+    expect(cancelledSessions).toEqual(['session-1'])
+    expect(saver.cancelQueuedTasksForSession).toHaveBeenCalledWith('session-1')
   })
 
   it('错峰时段：文档任务直接放行给当前会话（不创建调度器任务，无 running 残留）', async () => {

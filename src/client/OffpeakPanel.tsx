@@ -23,12 +23,6 @@ export type OffpeakPanelProps = {
   t: (key: keyof typeof zh) => string
 }
 
-function priorityLabel(priority: number, t: (key: keyof typeof zh) => string): string {
-  if (priority === 0) return t('priorityRealtime')
-  if (priority === 2) return t('priorityBackground')
-  return t('priorityOffpeak')
-}
-
 function statusLabel(status: string, t: (key: keyof typeof zh) => string): string {
   switch (status) {
     case 'pending': return t('statusPending')
@@ -52,10 +46,6 @@ function statusClass(status: string): string {
   }
 }
 
-function queuePositionLabel(position: number, t: (key: keyof typeof zh) => string): string {
-  return t('queuePosition').replace('{position}', String(position))
-}
-
 function TaskList({ tasks, t, onCancel, onMove, moving }: {
   tasks: PanelTask[]
   t: (key: keyof typeof zh) => string
@@ -75,12 +65,12 @@ function TaskList({ tasks, t, onCancel, onMove, moving }: {
         return (
         <li key={task.id} className={css.taskRow}>
           <div className={css.taskMain}>
-            <span className={css.queuePosition}>{queuePositionLabel(position + 1, t)}</span>
+            <span className={css.queuePosition}>#{position + 1}</span>
             <span className={css.taskTitle} title={task.prompt}>{task.title}</span>
             <span className={`${css.status} ${statusClass(task.status)}`}>{statusLabel(task.status, t)}</span>
           </div>
           <div className={css.taskMeta}>
-            <span className={css.muted}>{priorityLabel(task.priority, t)} · {formatClock(task.created_at)}</span>
+            <span className={css.muted}>{t('taskQueuedAt')} {formatClock(task.created_at)}</span>
             {task.status === 'pending' && (
               <span className={css.queueControls}>
                 <button
@@ -89,14 +79,14 @@ function TaskList({ tasks, t, onCancel, onMove, moving }: {
                   aria-label={t('queueMoveUp')}
                   title={t('queueMoveUp')}
                   onClick={() => { onMove(task.id, 'up') }}
-                >{t('queueMoveUp')}</button>
+                >↑</button>
                 <button
                   className={css.moveButton}
                   disabled={position === peers.length - 1 || isMoving}
                   aria-label={t('queueMoveDown')}
                   title={t('queueMoveDown')}
                   onClick={() => { onMove(task.id, 'down') }}
-                >{t('queueMoveDown')}</button>
+                >↓</button>
               </span>
             )}
             {(task.status === 'pending' || task.status === 'paused') && (

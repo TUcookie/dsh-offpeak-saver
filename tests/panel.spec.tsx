@@ -135,7 +135,7 @@ describe('OffpeakPanel 渲染', () => {
     expect(screen.getAllByText(/待执行任务/).length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('批量摘要')).toBeTruthy()
     expect(screen.getByText('排队中')).toBeTruthy()
-    expect(screen.getByText('第 1 位')).toBeTruthy()
+    expect(screen.getByText('#1')).toBeTruthy()
     expect(screen.getByText('取消')).toBeTruthy()
     // 最近任务/报告区已按要求移除，不应出现
     expect(screen.queryByText('最近任务')).toBeNull()
@@ -182,7 +182,7 @@ describe('OffpeakPanel 渲染', () => {
     }))
 
     render(<OffpeakPanel t={(key) => zh[key]} />)
-    const slider = await screen.findByLabelText('并发上限')
+    const slider = await screen.findByLabelText('每次最多同时处理几项任务')
     expect(slider.getAttribute('min')).toBe('1')
     expect(slider.getAttribute('max')).toBe('8')
     fireEvent.change(slider, { target: { value: '5' } })
@@ -209,7 +209,7 @@ describe('OffpeakPanel 渲染', () => {
     }))
 
     render(<OffpeakPanel t={(key) => zh[key]} />)
-    const down = await screen.findAllByLabelText('延后')
+    const down = await screen.findAllByLabelText('下移')
     expect(down).toHaveLength(2)
     fireEvent.click(down[0]!)
     await waitFor(() => expect(submitted).toEqual({ taskId: 'task-pending-1', direction: 'down' }))

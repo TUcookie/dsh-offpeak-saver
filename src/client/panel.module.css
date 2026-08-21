@@ -480,9 +480,9 @@ body[data-ds-dark-theme] .refreshImg:not(.refreshDark) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 38px;
+  width: 22px;
   height: 18px;
-  padding: 0 5px;
+  padding: 0;
   flex: none;
   border-radius: 5px;
   background: var(--dsw-alias-bg-base, #ffffff);
@@ -527,9 +527,9 @@ body[data-ds-dark-theme] .refreshImg:not(.refreshDark) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 32px;
+  width: 22px;
   height: 21px;
-  padding: 0 6px;
+  padding: 0;
   border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
   border-radius: 5px;
   background: transparent;

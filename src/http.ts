@@ -163,6 +163,23 @@ export function registerPanelHttp(ctx: Context, saver: OffPeakSaver, server: Web
         return
       }
 
+      if (method === 'POST' && route === '/offpeak-saver/reorder') {
+        const body = await readJson(req)
+        const id = typeof body.taskId === 'string' ? body.taskId : ''
+        const direction = body.direction === 'up' || body.direction === 'down' ? body.direction : null
+        if (id === '' || direction === null) {
+          send(res, 400, { ok: false, error: 'taskId 和 direction（up/down）不能为空' })
+          return
+        }
+        const task = saver.moveQueuedTask(id, direction)
+        if (task === null) {
+          send(res, 409, { ok: false, error: '只有排队中的任务可以调整顺序' })
+          return
+        }
+        send(res, 200, { ok: true, value: { id, position: saver.getQueuePosition(id) } })
+        return
+      }
+
       if (method === 'POST' && route === '/offpeak-saver/submit') {
         const body = await readJson(req)
         const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : ''
@@ -185,6 +202,7 @@ export function registerPanelHttp(ctx: Context, saver: OffPeakSaver, server: Web
           priority as 0 | 1 | 2,
         )
         const task = result.task
+        const position = priority === 0 ? null : saver.getQueuePosition(task.id)
         send(res, 200, {
           ok: true,
           value: {
@@ -193,7 +211,8 @@ export function registerPanelHttp(ctx: Context, saver: OffPeakSaver, server: Web
             priority,
             message: priority === 0
               ? '已开始执行'
-              : `已加入错峰队列，${saver.nextOffPeak()?.label ?? '下一空闲时段'}开始执行`,
+              : `已加入错峰队列，${position === null ? '' : `队列第 ${position.position} 位（共 ${position.total} 项），`}${saver.nextOffPeak()?.label ?? '下一空闲时段'}开始执行`,
+            ...(position === null ? {} : { queue_position: position.position, queue_total: position.total }),
           },
         })
         return

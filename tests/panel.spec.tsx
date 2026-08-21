@@ -67,6 +67,7 @@ function fakeOverview(): PanelOverview {
         title: '批量摘要',
         model: 'deepseek-v4-flash',
         priority: 1,
+        queue_order: 1,
         status: 'pending',
         created_at: '2026-08-18T11:00:00.000Z',
         executed_at: null,
@@ -90,6 +91,7 @@ function fakeOverview(): PanelOverview {
         title: '审计修复验证',
         model: 'deepseek-v4-flash',
         priority: 0,
+        queue_order: 0,
         status: 'completed',
         created_at: '2026-08-18T06:58:58.034Z',
         executed_at: '2026-08-18T06:58:58.034Z',
@@ -182,6 +184,32 @@ describe('OffpeakPanel 渲染', () => {
     expect(slider.getAttribute('max')).toBe('8')
     fireEvent.change(slider, { target: { value: '5' } })
     await waitFor(() => expect(submitted).toEqual({ maxConcurrency: 5 }))
+  })
+
+  it('同优先级队列可通过上移/下移按钮调整顺序', async () => {
+    stubEventSource()
+    let submitted: unknown = null
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/reorder')) {
+        submitted = JSON.parse(String(init?.body))
+        return new Response(JSON.stringify({ ok: true, value: { id: 'task-pending-1', position: { position: 2, total: 2 } } }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      const overview = fakeOverview()
+      overview.pending.push({
+        ...overview.pending[0]!, id: 'task-pending-2', title: '第二项任务', queue_order: 2,
+      })
+      return new Response(JSON.stringify({ ok: true, value: overview }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    render(<OffpeakPanel t={(key) => zh[key]} />)
+    const down = await screen.findAllByLabelText('下移')
+    expect(down).toHaveLength(2)
+    fireEvent.click(down[0]!)
+    await waitFor(() => expect(submitted).toEqual({ taskId: 'task-pending-1', direction: 'down' }))
   })
 
   it('正在执行的任务实时展示：标题、开始时间、时长与取消按钮', async () => {

@@ -6,6 +6,7 @@ import {
   formatClock,
   loadOverview,
   money,
+  moveQueuedTask,
   setMaxConcurrency,
   type PanelOverview,
   type PanelTask,
@@ -51,24 +52,49 @@ function statusClass(status: string): string {
   }
 }
 
-function TaskList({ tasks, t, onCancel }: {
+function TaskList({ tasks, t, onCancel, onMove, moving }: {
   tasks: PanelTask[]
   t: (key: keyof typeof zh) => string
   onCancel: (id: string) => void
+  onMove: (id: string, direction: 'up' | 'down') => void
+  moving: Set<string>
 }): React.ReactNode {
   if (tasks.length === 0) {
     return <div className={css.empty}>{t('queueEmpty')}</div>
   }
   return (
     <ul className={css.taskList}>
-      {tasks.map((task) => (
+      {tasks.map((task) => {
+        const peers = tasks.filter((candidate) => candidate.priority === task.priority)
+        const position = peers.findIndex((candidate) => candidate.id === task.id)
+        const isMoving = moving.has(task.id)
+        return (
         <li key={task.id} className={css.taskRow}>
           <div className={css.taskMain}>
+            <span className={css.queuePosition}>#{position + 1}</span>
             <span className={css.taskTitle} title={task.prompt}>{task.title}</span>
             <span className={`${css.status} ${statusClass(task.status)}`}>{statusLabel(task.status, t)}</span>
           </div>
           <div className={css.taskMeta}>
             <span className={css.muted}>{priorityLabel(task.priority, t)} · {formatClock(task.created_at)}</span>
+            {task.status === 'pending' && (
+              <span className={css.queueControls}>
+                <button
+                  className={css.moveButton}
+                  disabled={position === 0 || isMoving}
+                  aria-label={t('queueMoveUp')}
+                  title={t('queueMoveUp')}
+                  onClick={() => { onMove(task.id, 'up') }}
+                >↑</button>
+                <button
+                  className={css.moveButton}
+                  disabled={position === peers.length - 1 || isMoving}
+                  aria-label={t('queueMoveDown')}
+                  title={t('queueMoveDown')}
+                  onClick={() => { onMove(task.id, 'down') }}
+                >↓</button>
+              </span>
+            )}
             {(task.status === 'pending' || task.status === 'paused') && (
               <button className={css.button} onClick={() => { onCancel(task.id) }}>
                 {t('taskCancel')}
@@ -76,7 +102,8 @@ function TaskList({ tasks, t, onCancel }: {
             )}
           </div>
         </li>
-      ))}
+        )
+      })}
     </ul>
   )
 }
@@ -161,6 +188,7 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [cancelling, setCancelling] = useState<Set<string>>(new Set())
+  const [moving, setMoving] = useState<Set<string>>(new Set())
   const [updatingConcurrency, setUpdatingConcurrency] = useState(false)
   const [nowTick, setNowTick] = useState(() => Date.now())
   const [streamTexts, setStreamTexts] = useState<Record<string, TaskStreamText>>({})
@@ -187,6 +215,22 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
     } finally {
       setCancelling((prev) => {
         const next = new Set(prev)
+        next.delete(taskId)
+        return next
+      })
+    }
+  }, [load])
+
+  const move = useMemo(() => async (taskId: string, direction: 'up' | 'down'): Promise<void> => {
+    setMoving((previous) => new Set(previous).add(taskId))
+    try {
+      await moveQueuedTask(taskId, direction)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setMoving((previous) => {
+        const next = new Set(previous)
         next.delete(taskId)
         return next
       })
@@ -357,8 +401,15 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
       <div className={css.section}>
         <div className={css.sectionHead}>
           <h3 className={css.sectionTitle}>{t('queueTitle')}（{queue.length}）</h3>
+          {queue.length > 1 && <span className={css.sectionHint}>{t('queueOrderHint')}</span>}
         </div>
-        <TaskList tasks={queue} t={t} onCancel={(id) => { void cancel(id) }} />
+        <TaskList
+          tasks={queue}
+          t={t}
+          moving={moving}
+          onCancel={(id) => { void cancel(id) }}
+          onMove={(id, direction) => { void move(id, direction) }}
+        />
       </div>
     </div>
   )

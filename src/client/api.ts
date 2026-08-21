@@ -5,6 +5,7 @@ export interface PanelTask {
   title: string
   model: string
   priority: number
+  queue_order: number
   status: string
   created_at: string
   executed_at: string | null
@@ -87,6 +88,16 @@ export function cancelTask(taskId: string): Promise<{ id: string; status: string
   return request<{ id: string; status: string }>('/offpeak-saver/cancel', {
     method: 'POST',
     body: JSON.stringify({ taskId }),
+  })
+}
+
+export function moveQueuedTask(taskId: string, direction: 'up' | 'down'): Promise<{
+  id: string
+  position: { position: number; total: number } | null
+}> {
+  return request('/offpeak-saver/reorder', {
+    method: 'POST',
+    body: JSON.stringify({ taskId, direction }),
   })
 }
 

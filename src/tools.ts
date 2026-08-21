@@ -83,6 +83,8 @@ export function createTools(saver: OffPeakSaver): Array<ReturnType<typeof define
           cost_baseline: { type: 'number' },
           savings: { type: 'number' },
           next_offpeak_start: { type: 'string' },
+          queue_position: { type: 'number' },
+          queue_total: { type: 'number' },
         },
       },
       render: (_args, value) => [
@@ -135,12 +137,14 @@ export function createTools(saver: OffPeakSaver): Array<ReturnType<typeof define
       }
 
       const next = saver.nextOffPeak()
+      const position = saver.getQueuePosition(task.id)
       return toLossless({
         task_id: task.id,
         status: task.status,
         priority: priorityLabel,
-        message: `已加入错峰队列，预计在 ${next?.label ?? '下一空闲时段'} 后开始执行。`,
+        message: `已加入错峰队列，${position === null ? '' : `队列第 ${position.position} 位（共 ${position.total} 项），可在仪表盘调整顺序；`}预计在 ${next?.label ?? '下一空闲时段'} 后开始执行。`,
         ...(next !== null ? { next_offpeak_start: next.label } : {}),
+        ...(position === null ? {} : { queue_position: position.position, queue_total: position.total }),
       })
     },
     presentCall: (args) => ({

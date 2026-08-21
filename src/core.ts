@@ -65,6 +65,7 @@ export interface TaskView {
   title: string
   model: string
   priority: number
+  queue_order: number
   status: TaskRow['status']
   created_at: string
   executed_at: string | null
@@ -257,6 +258,20 @@ export class OffPeakSaver {
     return task === null ? null : this.toView(task)
   }
 
+  /** 同优先级队列位置，供高峰确认和提交回执展示。 */
+  getQueuePosition(id: string): { position: number; total: number } | null {
+    return this.store.queuePosition(id)
+  }
+
+  /** 仪表盘操作：仅同优先级、pending 任务可上移或下移。 */
+  moveQueuedTask(id: string, direction: 'up' | 'down'): TaskRow | null {
+    const moved = this.store.movePendingTask(id, direction)
+    if (moved !== null && moved.status === 'pending') {
+      this.emit({ type: 'log', level: 'info', message: `已调整任务 ${id} 的队列顺序` })
+    }
+    return moved
+  }
+
   cancelTask(id: string): TaskRow | null {
     const task = this.store.getTask(id)
     if (task === null) return null
@@ -327,7 +342,7 @@ export class OffPeakSaver {
 
   /** 面板用：待执行 / 运行中 / 最近任务一览。 */
   listTasks(): { pending: TaskView[]; running: TaskView[]; recent: TaskView[] } {
-    const pending = this.store.listByStatus('pending').map((task) => this.toView(task))
+    const pending = this.store.listPending().map((task) => this.toView(task))
     const running = this.store.listByStatus('running').map((task) => this.toView(task))
     const recent = this.store.listRecent(12).map((task) => this.toView(task))
     return { pending, running, recent }
@@ -403,6 +418,7 @@ export class OffPeakSaver {
       title: payload.title ?? '未命名任务',
       model: payload.model ?? this.config.default_model,
       priority: task.priority,
+      queue_order: task.queue_order,
       status: task.status,
       created_at: task.created_at,
       executed_at: task.executed_at,

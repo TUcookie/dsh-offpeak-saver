@@ -29,6 +29,7 @@ export interface TaskRow {
   id: string
   payload: string
   priority: number
+  queue_order: number
   status: TaskStatus
   created_at: string
   executed_at: string | null
@@ -85,6 +86,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   payload TEXT NOT NULL,
   priority INTEGER NOT NULL DEFAULT 1,
+  queue_order INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending',
   created_at TEXT NOT NULL,
   executed_at TEXT,
@@ -133,6 +135,7 @@ export function openDatabase(dbPath: string): DatabaseSync {
   db.exec('PRAGMA journal_mode = WAL')
   db.exec('PRAGMA busy_timeout = 5000')
   db.exec(SCHEMA)
+  const addedQueueOrder = ensureColumn(db, 'tasks', 'queue_order', 'INTEGER NOT NULL DEFAULT 0')
   ensureColumn(db, 'tasks', 'billed_at', 'TEXT')
   ensureColumn(db, 'tasks', 'claimed_at', 'TEXT')
   ensureColumn(db, 'tasks', 'discount_used', 'REAL NOT NULL DEFAULT 1')
@@ -140,19 +143,46 @@ export function openDatabase(dbPath: string): DatabaseSync {
   ensureColumn(db, 'billing_logs', 'discount_used', 'REAL NOT NULL DEFAULT 1')
   // 索引必须在列迁移之后创建：旧库升级时 SCHEMA 阶段还没有 claimed_at 列
   db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_claimed ON tasks(claimed_at)')
+  db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_pending_order ON tasks(status, priority, queue_order, created_at)')
+  if (addedQueueOrder) backfillQueueOrder(db)
   return db
 }
 
-function ensureColumn(db: DatabaseSync, table: string, column: string, ddl: string): void {
+function ensureColumn(db: DatabaseSync, table: string, column: string, ddl: string): boolean {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
-  if (columns.some((c) => c.name === column)) return
+  if (columns.some((c) => c.name === column)) return false
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`)
+  return true
+}
+
+/** 旧库迁移后，保留原有“同优先级按创建时间”的默认顺序。 */
+function backfillQueueOrder(db: DatabaseSync): void {
+  const rows = db.prepare(
+    `SELECT id, priority FROM tasks WHERE status = 'pending' ORDER BY priority ASC, created_at ASC, id ASC`,
+  ).all() as Array<{ id: string; priority: number }>
+  const setOrder = db.prepare('UPDATE tasks SET queue_order = @queueOrder WHERE id = @id')
+  const nextByPriority = new Map<number, number>()
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    for (const row of rows) {
+      const next = (nextByPriority.get(row.priority) ?? 0) + 1
+      nextByPriority.set(row.priority, next)
+      setOrder.run({ '@id': row.id, '@queueOrder': next })
+    }
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
 }
 
 export class TaskStore {
   private readonly insertTaskStmt: StatementSync
+  private readonly nextQueueOrderStmt: StatementSync
   private readonly getTaskStmt: StatementSync
   private readonly listPendingStmt: StatementSync
+  private readonly listPendingForPriorityStmt: StatementSync
+  private readonly updateQueueOrderStmt: StatementSync
   private readonly listByStatusStmt: StatementSync
   private readonly listRecentStmt: StatementSync
   private readonly claimStmt: StatementSync
@@ -179,14 +209,25 @@ export class TaskStore {
 
   constructor(private readonly db: DatabaseSync) {
     this.insertTaskStmt = db.prepare(
-      `INSERT INTO tasks (id, payload, priority, status, created_at)
-       VALUES (@id, @payload, @priority, 'pending', @created_at)`,
+      `INSERT INTO tasks (id, payload, priority, queue_order, status, created_at)
+       VALUES (@id, @payload, @priority, @queue_order, 'pending', @created_at)`,
+    )
+    this.nextQueueOrderStmt = db.prepare(
+      `SELECT COALESCE(MAX(queue_order), 0) + 1 AS nextOrder
+       FROM tasks WHERE status = 'pending' AND priority = @priority`,
     )
     this.getTaskStmt = db.prepare('SELECT * FROM tasks WHERE id = @id')
     this.listPendingStmt = db.prepare(
       `SELECT * FROM tasks
        WHERE status = 'pending'
-       ORDER BY priority ASC, created_at ASC`,
+       ORDER BY priority ASC, queue_order ASC, created_at ASC, id ASC`,
+    )
+    this.listPendingForPriorityStmt = db.prepare(
+      `SELECT * FROM tasks WHERE status = 'pending' AND priority = @priority
+       ORDER BY queue_order ASC, created_at ASC, id ASC`,
+    )
+    this.updateQueueOrderStmt = db.prepare(
+      "UPDATE tasks SET queue_order = @queueOrder WHERE id = @id AND status = 'pending'",
     )
     this.listByStatusStmt = db.prepare(
       'SELECT * FROM tasks WHERE status = @status ORDER BY created_at ASC',
@@ -309,12 +350,21 @@ export class TaskStore {
   }
 
   createTask(task: { id: string; payload: TaskPayload; priority: number; created_at: string }): TaskRow {
-    this.insertTaskStmt.run({
-      '@id': task.id,
-      '@payload': JSON.stringify(task.payload),
-      '@priority': task.priority,
-      '@created_at': task.created_at,
-    })
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const nextOrder = (this.nextQueueOrderStmt.get({ '@priority': task.priority }) as { nextOrder: number }).nextOrder
+      this.insertTaskStmt.run({
+        '@id': task.id,
+        '@payload': JSON.stringify(task.payload),
+        '@priority': task.priority,
+        '@queue_order': nextOrder,
+        '@created_at': task.created_at,
+      })
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
     const created = this.getTask(task.id)
     if (created === null) throw new Error('offpeak-saver: 任务写入后未能读取')
     return created
@@ -326,6 +376,41 @@ export class TaskStore {
 
   listPending(): TaskRow[] {
     return this.listPendingStmt.all() as unknown as TaskRow[]
+  }
+
+  /** 某任务在同优先级待执行队列的位置（从 1 开始）。 */
+  queuePosition(id: string): { position: number; total: number } | null {
+    const task = this.getTask(id)
+    if (task === null || task.status !== 'pending') return null
+    const peers = this.listPendingForPriority(task.priority)
+    const index = peers.findIndex((peer) => peer.id === id)
+    return index < 0 ? null : { position: index + 1, total: peers.length }
+  }
+
+  /** 在同优先级 pending 队列中移动一格；顺序以整数重新压实，便于长期持久化。 */
+  movePendingTask(id: string, direction: 'up' | 'down'): TaskRow | null {
+    const task = this.getTask(id)
+    if (task === null || task.status !== 'pending') return null
+    const peers = this.listPendingForPriority(task.priority)
+    const index = peers.findIndex((peer) => peer.id === id)
+    const target = index + (direction === 'up' ? -1 : 1)
+    if (index < 0 || target < 0 || target >= peers.length) return task
+    const [moved] = peers.splice(index, 1)
+    peers.splice(target, 0, moved!)
+
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      peers.forEach((peer, order) => this.updateQueueOrderStmt.run({ '@id': peer.id, '@queueOrder': order + 1 }))
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+    return this.getTask(id)
+  }
+
+  private listPendingForPriority(priority: number): TaskRow[] {
+    return this.listPendingForPriorityStmt.all({ '@priority': priority }) as unknown as TaskRow[]
   }
 
   listByStatus(status: TaskStatus): TaskRow[] {

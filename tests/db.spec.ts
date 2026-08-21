@@ -21,12 +21,19 @@ describe('TaskStore', () => {
     expect(store.getTask('t1')?.id).toBe('t1')
   })
 
-  it('待执行队列按优先级与创建时间排序', () => {
+  it('待执行队列按优先级与同优先级手动顺序排序', () => {
     const store = makeStore()
     store.createTask({ id: 'a', payload: payload(), priority: 2, created_at: '2026-08-18T00:00:00Z' })
     store.createTask({ id: 'b', payload: payload(), priority: 1, created_at: '2026-08-18T00:00:00Z' })
     store.createTask({ id: 'c', payload: payload(), priority: 1, created_at: '2026-08-18T00:00:00Z' })
     expect(store.listPending().map((t) => t.id)).toEqual(['b', 'c', 'a'])
+    expect(store.queuePosition('b')).toEqual({ position: 1, total: 2 })
+    expect(store.queuePosition('c')).toEqual({ position: 2, total: 2 })
+
+    store.movePendingTask('c', 'up')
+    expect(store.listPending().map((t) => t.id)).toEqual(['c', 'b', 'a'])
+    expect(store.queuePosition('c')).toEqual({ position: 1, total: 2 })
+    expect(store.queuePosition('a')).toEqual({ position: 1, total: 1 })
   })
 
   it('状态流转：pending -> running -> completed 并写入计费日志', () => {
@@ -159,8 +166,10 @@ describe('TaskStore', () => {
     expect(migrated?.claimed_at).toBeNull()
     expect(migrated?.billed_at).toBeNull()
     expect(migrated?.discount_used).toBe(1)
+    expect(migrated?.queue_order).toBe(1)
     const columns = db.prepare('PRAGMA table_info(tasks)').all() as Array<{ name: string }>
     expect(columns.map((c) => c.name)).toContain('claimed_at')
+    expect(columns.map((c) => c.name)).toContain('queue_order')
     db.close()
     for (let attempt = 0; attempt < 10; attempt++) {
       try {

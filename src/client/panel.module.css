@@ -52,41 +52,59 @@
   letter-spacing: 0.05em;
 }
 
-.heroBody {
-  align-items: end;
-  justify-content: space-between;
-  gap: 16px;
+.heroTitle {
+  margin-top: 2px;
+  color: var(--dsw-alias-label-primary, #1f2328);
+  font-size: 15px;
+  font-weight: 700;
 }
 
-.heroLabel,
+.heroBody {
+  display: block;
+}
+
 .metricLabel,
 .controlHint {
   color: var(--dsw-alias-label-secondary, #656d76);
   font-size: 11px;
 }
 
-.heroValue {
-  margin-top: 4px;
-  color: var(--dsw-static-green-500, #2da44e);
-  font-size: 30px;
-  font-weight: 720;
-  letter-spacing: -0.035em;
-  font-variant-numeric: tabular-nums;
-}
-
-.heroMeta {
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 5px;
+.heroDescription {
+  margin: 0;
   color: var(--dsw-alias-label-secondary, #656d76);
-  font-size: 11px;
-  text-align: right;
+  font-size: 12px;
+  line-height: 1.55;
 }
 
-.heroMeta strong {
+.heroPlan {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.planItem {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-base, #ffffff) 72%, transparent);
+}
+
+.planItem span {
+  color: var(--dsw-alias-label-secondary, #656d76);
+  font-size: 10px;
+}
+
+.planItem strong {
+  overflow: hidden;
   color: var(--dsw-alias-label-primary, #1f2328);
   font-size: 12px;
   font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .title {
@@ -462,8 +480,9 @@ body[data-ds-dark-theme] .refreshImg:not(.refreshDark) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
+  min-width: 38px;
   height: 18px;
+  padding: 0 5px;
   flex: none;
   border-radius: 5px;
   background: var(--dsw-alias-bg-base, #ffffff);
@@ -508,9 +527,9 @@ body[data-ds-dark-theme] .refreshImg:not(.refreshDark) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
+  min-width: 32px;
   height: 21px;
-  padding: 0;
+  padding: 0 6px;
   border: 1px solid var(--dsw-alias-border-l2, #d0d7de);
   border-radius: 5px;
   background: transparent;

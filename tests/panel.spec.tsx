@@ -129,10 +129,13 @@ describe('OffpeakPanel 渲染', () => {
       expect(screen.getByText('空闲时段（半价）')).toBeTruthy()
     })
     expect(screen.getByText('今日节省')).toBeTruthy()
+    expect(screen.getByText('当前安排')).toBeTruthy()
+    expect(screen.getByText('正在按顺序执行')).toBeTruthy()
     expect(screen.getAllByText('¥0.10').length).toBeGreaterThanOrEqual(3)
     expect(screen.getAllByText(/待执行任务/).length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('批量摘要')).toBeTruthy()
     expect(screen.getByText('排队中')).toBeTruthy()
+    expect(screen.getByText('第 1 位')).toBeTruthy()
     expect(screen.getByText('取消')).toBeTruthy()
     // 最近任务/报告区已按要求移除，不应出现
     expect(screen.queryByText('最近任务')).toBeNull()
@@ -206,7 +209,7 @@ describe('OffpeakPanel 渲染', () => {
     }))
 
     render(<OffpeakPanel t={(key) => zh[key]} />)
-    const down = await screen.findAllByLabelText('下移')
+    const down = await screen.findAllByLabelText('延后')
     expect(down).toHaveLength(2)
     fireEvent.click(down[0]!)
     await waitFor(() => expect(submitted).toEqual({ taskId: 'task-pending-1', direction: 'down' }))

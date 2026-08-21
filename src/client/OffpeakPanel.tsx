@@ -52,6 +52,10 @@ function statusClass(status: string): string {
   }
 }
 
+function queuePositionLabel(position: number, t: (key: keyof typeof zh) => string): string {
+  return t('queuePosition').replace('{position}', String(position))
+}
+
 function TaskList({ tasks, t, onCancel, onMove, moving }: {
   tasks: PanelTask[]
   t: (key: keyof typeof zh) => string
@@ -71,7 +75,7 @@ function TaskList({ tasks, t, onCancel, onMove, moving }: {
         return (
         <li key={task.id} className={css.taskRow}>
           <div className={css.taskMain}>
-            <span className={css.queuePosition}>#{position + 1}</span>
+            <span className={css.queuePosition}>{queuePositionLabel(position + 1, t)}</span>
             <span className={css.taskTitle} title={task.prompt}>{task.title}</span>
             <span className={`${css.status} ${statusClass(task.status)}`}>{statusLabel(task.status, t)}</span>
           </div>
@@ -85,14 +89,14 @@ function TaskList({ tasks, t, onCancel, onMove, moving }: {
                   aria-label={t('queueMoveUp')}
                   title={t('queueMoveUp')}
                   onClick={() => { onMove(task.id, 'up') }}
-                >↑</button>
+                >{t('queueMoveUp')}</button>
                 <button
                   className={css.moveButton}
                   disabled={position === peers.length - 1 || isMoving}
                   aria-label={t('queueMoveDown')}
                   title={t('queueMoveDown')}
                   onClick={() => { onMove(task.id, 'down') }}
-                >↓</button>
+                >{t('queueMoveDown')}</button>
               </span>
             )}
             {(task.status === 'pending' || task.status === 'paused') && (
@@ -327,7 +331,10 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
       <section className={`${css.hero} ${state.phase === 'peak' ? css.heroPeak : css.heroOffpeak}`}>
         <div className={css.heroTop}>
           <div className={css.heroStatus}>
-            <span className={css.eyebrow}>{t('nav')}</span>
+            <div>
+              <div className={css.eyebrow}>{t('nav')}</div>
+              <div className={css.heroTitle}>{t('dashboardStatus')}</div>
+            </div>
             <span className={`${css.badge} ${state.phase === 'peak' ? css.badgePeak : css.badgeOffpeak}`}>
               <span className={css.statusDot} />
               {state.phase === 'peak' ? t('phasePeak') : t('phaseOffpeak')}
@@ -347,13 +354,18 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
           </button>
         </div>
         <div className={css.heroBody}>
-          <div>
-            <div className={css.heroLabel}>{t('statTodaySavings')}</div>
-            <div className={css.heroValue}>{money(state.reports.day.savings, state.reports.day.currency)}</div>
-          </div>
-          <div className={css.heroMeta}>
-            {state.nextOffPeak !== null && <span>{t('nextOffpeak')} · {state.nextOffPeak}</span>}
-            <strong>{queue.length} {t('statPending')}</strong>
+          <p className={css.heroDescription}>
+            {state.phase === 'peak' ? t('statusPeakDescription') : t('statusOffpeakDescription')}
+          </p>
+          <div className={css.heroPlan}>
+            <div className={css.planItem}>
+              <span>{t('nextRun')}</span>
+              <strong>{state.nextOffPeak ?? t('runningInOrder')}</strong>
+            </div>
+            <div className={css.planItem}>
+              <span>{t('queueCount')}</span>
+              <strong>{queue.length} {t('statPending')}</strong>
+            </div>
           </div>
         </div>
       </section>
@@ -384,10 +396,10 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
       {error !== null && <div className={css.error} role="alert">{error}</div>}
 
       <div className={css.metricGrid}>
+        <MetricCard label={t('statTodaySavings')} value={money(state.reports.day.savings, state.reports.day.currency)} tone="success" />
         <MetricCard label={t('statWeekSavings')} value={money(state.reports.week.savings, state.reports.week.currency)} tone="success" />
         <MetricCard label={t('statMonthSavings')} value={money(state.reports.month.savings, state.reports.month.currency)} tone="success" />
         <MetricCard label={t('statExecutions')} value={state.reports.day.executions} tone="accent" />
-        <MetricCard label={t('statFreeTokens')} value={state.reports.day.equivalent_free_tokens.toLocaleString()} />
       </div>
 
       <RunningSection

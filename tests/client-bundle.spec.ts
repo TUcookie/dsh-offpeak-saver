@@ -8,7 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const localRequire = createRequire(import.meta.url)
 
 describe('打包后的 client bundle（DSH ModuleLoader 协议）', () => {
-  it('可被 window.__ModuleLoader__ 加载，apply 注册 settings.section 槽', () => {
+  it('可被 window.__ModuleLoader__ 加载，apply 仅注册侧边栏入口与浮层', () => {
     const code = readFileSync(path.join(root, 'lib', 'client.js'), 'utf8')
 
     let capturedFactory: ((require: (spec: string) => unknown) => unknown) | null = null
@@ -73,7 +73,7 @@ describe('打包后的 client bundle（DSH ModuleLoader 协议）', () => {
     })
 
     const byId = new Map(registrations.map((registration) => [registration.id, registration]))
-    expect(byId.get('offpeak-saver-panel')?.name).toBe('settings.section')
+    expect(byId.has('offpeak-saver-panel')).toBe(false)
     expect(byId.get('offpeak-saver-entry')?.name).toBe('sidebar.footer.action')
     expect(byId.get('offpeak-saver-overlay')?.name).toBe('shell.overlay')
     expect(locales[0]?.zh.nav).toBe('错峰省钱')

@@ -7,3 +7,11 @@
         peak_hours:
           - '09:00-12:00'
           - '14:00-18:00'
+
+# 设置中的“插件”管理页已废弃。只停用这两个浏览器 UI 行；
+# 不移除任何已安装插件，也不影响 dsh-offpeak-saver 的侧边栏入口和运行服务。
+- id: ui-settings-plugin-inventory
+  disabled: true
+
+- id: ui-settings-plugins
+  disabled: true

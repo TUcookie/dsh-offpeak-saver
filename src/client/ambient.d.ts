@@ -42,10 +42,6 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   export type PropsRuntime<Slot extends string> = Record<string, never>
 }
 
-declare module '@deepseek-ai/dsh-client-ui-settings/client' {
-  // type-only：拉取 settings.section 槽声明，运行时无值
-}
-
 declare module '*.module.css' {
   const classMap: Record<string, string>
   export default classMap

@@ -1,6 +1,6 @@
 /** 错峰省钱面板：待执行任务、历史账单、节省金额。 */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   cancelTask,
   formatClock,
@@ -184,8 +184,10 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
   const [cancelling, setCancelling] = useState<Set<string>>(new Set())
   const [moving, setMoving] = useState<Set<string>>(new Set())
   const [updatingConcurrency, setUpdatingConcurrency] = useState(false)
+  const [draftConcurrency, setDraftConcurrency] = useState<number | null>(null)
   const [nowTick, setNowTick] = useState(() => Date.now())
   const [streamTexts, setStreamTexts] = useState<Record<string, TaskStreamText>>({})
+  const concurrencyRequestInFlight = useRef(false)
 
   const load = useMemo(() => async (): Promise<void> => {
     setError(null)
@@ -233,6 +235,8 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
 
   const updateConcurrency = useMemo(() => async (maxConcurrency: number): Promise<void> => {
     if (state === null || maxConcurrency === state.concurrency.configured) return
+    if (concurrencyRequestInFlight.current) return
+    concurrencyRequestInFlight.current = true
     setUpdatingConcurrency(true)
     try {
       const concurrency = await setMaxConcurrency(maxConcurrency)
@@ -240,7 +244,9 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
+      concurrencyRequestInFlight.current = false
       setUpdatingConcurrency(false)
+      setDraftConcurrency(null)
     }
   }, [state])
 
@@ -372,12 +378,19 @@ export function OffpeakPanel({ t }: OffpeakPanelProps): React.ReactNode {
             min="1"
             max="8"
             step="1"
-            value={state.concurrency.configured}
+            value={draftConcurrency ?? state.concurrency.configured}
             disabled={updatingConcurrency}
-            onChange={(event) => { void updateConcurrency(Number(event.target.value)) }}
+            onChange={(event) => { setDraftConcurrency(Number(event.target.value)) }}
+            onPointerUp={(event) => { void updateConcurrency(Number(event.currentTarget.value)) }}
+            onBlur={(event) => { void updateConcurrency(Number(event.currentTarget.value)) }}
+            onKeyUp={(event) => {
+              if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
+                void updateConcurrency(Number(event.currentTarget.value))
+              }
+            }}
           />
           <output className={css.concurrencyValue}>
-            {state.concurrency.configured}
+            {draftConcurrency ?? state.concurrency.configured}
           </output>
           {updatingConcurrency && <span className={css.muted}>{t('concurrencyUpdating')}</span>}
         </label>

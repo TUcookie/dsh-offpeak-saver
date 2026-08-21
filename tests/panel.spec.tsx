@@ -171,7 +171,7 @@ describe('OffpeakPanel 渲染', () => {
     await waitFor(() => expect(cancelled).toBe(true))
   })
 
-  it('并发滑块提交 1–8 范围内的新上限', async () => {
+  it('并发滑块拖动时不请求，松手后只提交最终上限', async () => {
     stubEventSource()
     let submitted: unknown = null
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -191,6 +191,8 @@ describe('OffpeakPanel 渲染', () => {
     expect(slider.getAttribute('min')).toBe('1')
     expect(slider.getAttribute('max')).toBe('8')
     fireEvent.change(slider, { target: { value: '5' } })
+    expect(submitted).toBeNull()
+    fireEvent.pointerUp(slider)
     await waitFor(() => expect(submitted).toEqual({ maxConcurrency: 5 }))
   })
 
